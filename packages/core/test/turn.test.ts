@@ -179,6 +179,21 @@ describe('Match (sequential mode)', () => {
     expect(unwrap(match.endTurn(P3))).toMatchObject({ activePlayer: P1, round: 2 });
   });
 
+  it('toggles silent running and hides the sub from enemies that are not adjacent', () => {
+    const w = new WorldState(Grid.filled(10, 1, 'deep_ocean'));
+    const sub = w.spawnUnit('submarine', P1, { x: 2, y: 0 });
+    w.spawnUnit('infantry', P1, { x: 0, y: 0 });
+    w.spawnUnit('destroyer', P2, { x: 6, y: 0 });
+    w.spawnUnit('corvette', P2, { x: 4, y: 0 });
+    w.spawnUnit('infantry', P2, { x: 9, y: 0 });
+    const { match } = Match.start(w, [P1, P2]);
+    expect(match.fogs.get(P2)!.detectedUnits.has(sub.id)).toBe(true);
+    const fog = unwrap(match.setSilentRunning(P1, sub.id, true));
+    expect(fog.get(P2)?.unitsLost).toContain(sub.id);
+    expect(sub.maxMoves).toBe(1);
+    expect(match.setSilentRunning(P2, sub.id, false)).toMatchObject({ ok: false, error: { code: 'NOT_YOUR_TURN' } });
+  });
+
   it('round-trips through a snapshot mid-game', () => {
     const { match } = setup();
     const inf = match.world.unitsOf(P1)[0]!;

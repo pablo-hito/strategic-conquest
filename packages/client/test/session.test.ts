@@ -1,0 +1,81 @@
+import { describe, expect, it } from 'vitest';
+import { GameSession } from '../src/session.js';
+
+const opts = { size: 'small', density: 'normal', players: 2, seed: 'session-test' } as const;
+
+/** Simple scripted player: send every idle unit toward the nearest city it doesn't own. */
+function playTurn(s: GameSession): void {
+  const me = s.viewer;
+  for (const city of s.world.citiesOf(me)) if (!city.production) s.setProduction(city.id, 'infantry');
+  for (let guard = 0; guard < 50; guard++) {
+    const u = s.nextIdleUnit();
+    if (!u) break;
+    const targets = [...s.world.allCities()]
+      .filter((c) => c.owner !== me)
+      .sort((a, b) => s.world.grid.distance(a.position, u.position) - s.world.grid.distance(b.position, u.position));
+    const goal = targets.find((c) => s.plan(u.id, c.position));
+    if (!goal) {
+      s.skip(u.id);
+      continue;
+    }
+    s.moveTo(u.id, goal.position);
+    if (s.world.unit(u.id) && s.world.unit(u.id)!.movesLeft > 0) s.skip(u.id);
+  }
+  s.endTurn();
+  if (s.match.status === 'playing') s.beginTurn();
+}
+
+describe('GameSession (hot-seat)', () => {
+  it('plays many rounds with orders, captures and production without errors', () => {
+    const s = GameSession.create(opts);
+    for (let i = 0; i < 60 && s.match.status === 'playing'; i++) playTurn(s);
+    expect(s.match.round).toBeGreaterThan(20);
+    const captured = s.log.filter((e) => e.text.startsWith('Capturaste'));
+    expect(captured.length).toBeGreaterThan(0);
+    expect(s.log.some((e) => e.text.includes('completó'))).toBe(true);
+  });
+
+  it('only shows each player their own log entries and view', () => {
+    const s = GameSession.create(opts);
+    for (let i = 0; i < 10; i++) playTurn(s);
+    const p1 = s.viewer;
+    expect(s.visibleLog().every((e) => e.audience === 'all' || e.audience === p1)).toBe(true);
+    expect(s.view().viewer).toBe(p1);
+    expect(s.view().ownUnits.every((u) => u.owner === p1)).toBe(true);
+  });
+
+  it('keeps multi-turn go-to orders and resumes them on the next turn', () => {
+    const s = GameSession.create(opts);
+    const inf = s.world.unitsOf(s.viewer)[0]!;
+    const far = [...s.world.allCities()]
+      .filter((c) => c.owner === null)
+      .map((c) => ({ c, plan: s.plan(inf.id, c.position) }))
+      .find((x) => x.plan && x.plan.turns >= 3);
+    expect(far).toBeDefined();
+    s.moveTo(inf.id, far!.c.position);
+    expect(s.orders.get(inf.id)).toEqual(far!.c.position);
+    const before = { ...inf.position };
+    s.endTurn(); s.beginTurn(); // P2
+    s.endTurn(); s.beginTurn(); // back to P1: order resumes
+    expect(inf.position).not.toEqual(before);
+  });
+
+  it('round-trips through a save', () => {
+    const s = GameSession.create(opts);
+    for (let i = 0; i < 6; i++) playTurn(s);
+    const copy = GameSession.restore(JSON.parse(JSON.stringify(s.save())));
+    expect(copy.match.toSnapshot()).toEqual(s.match.toSnapshot());
+    expect([...copy.orders]).toEqual([...s.orders]);
+    playTurn(copy);
+  });
+
+  it('hides the map between turns until the next player takes the seat', () => {
+    const s = GameSession.create(opts);
+    const p1 = s.viewer;
+    s.endTurn();
+    expect(s.awaitingHandoff).toBe(true);
+    expect(s.viewer).not.toBe(p1);
+    s.beginTurn();
+    expect(s.awaitingHandoff).toBe(false);
+  });
+});

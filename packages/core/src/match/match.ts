@@ -108,6 +108,18 @@ export class Match {
     return city.value.setSpecialization(spec);
   }
 
+  /** Toggle silent running; refreshes fog because stealth changes what enemies see. */
+  setSilentRunning(player: PlayerId, unitId: UnitId, on: boolean): Result<ReadonlyMap<PlayerId, FogUpdate>, string> {
+    const turn = this.checkTurn(player);
+    if (!turn.ok) return turn;
+    const unit = this.world.unit(unitId);
+    if (!unit) return err('UNKNOWN_UNIT', `no unit ${unitId}`);
+    if (unit.owner !== player) return err('NOT_YOUR_UNIT', 'you can only command your own units');
+    const r = unit.setSilentRunning(on);
+    if (!r.ok) return r;
+    return ok(this.refreshAllFog());
+  }
+
   /** Close the active player's turn and open the next living player's. */
   endTurn(player: PlayerId): Result<TurnReport, CommandError> {
     const turn = this.checkTurn(player);

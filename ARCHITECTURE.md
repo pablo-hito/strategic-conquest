@@ -133,6 +133,17 @@ Sólo el primer paso puede rechazar el comando entero; a partir de ahí la unida
 
 Medido sobre 15 semillas por combinación (3 tamaños × 3 densidades × 2/4/6 jugadores): ninguna falla, equilibrio mínimo 0.67–0.94 y mediana 0.81–0.99; un mapa Huge para 6 jugadores tarda <100 ms.
 
+## 3f. Visor local (`packages/client`)
+
+Primer cliente: Vite + TypeScript + Canvas 2D, sin framework. Juega partidas locales por turnos (hot-seat) usando `Match` exactamente como lo hará el servidor, y **sólo dibuja el `PlayerView` del jugador activo**: entre turnos una pantalla opaca oculta el mapa hasta que el siguiente jugador toma el control.
+
+- `session.ts`: sesión de juego sin DOM (comandos, órdenes de varios turnos "ir a", registro de eventos filtrado por audiencia, guardado). Tiene tests propios.
+- `renderer.ts`: mapa con zoom y desplazamiento, costas, relieve, niebla (negro = sin explorar, velo = recordado), ciudades y fichas cuya forma indica el dominio (cuadrado = tierra, casco = mar, rombo = aire), alcance del turno y ruta con marcadores de turno; minimapa.
+- `main.ts`: interfaz (panel de unidad y de ciudad con producción y especialización, registro táctico, nueva partida con semilla), mouse, teclado y gestos táctiles. Autoguardado en `localStorage`.
+- `scripts/build-standalone.mjs`: empaqueta todo en un único HTML.
+
+El atacar todavía no existe (Fase 3): hacer clic sobre un enemigo lo avisa.
+
 ## 4. Valores iniciales de balance (tunables)
 
 | Unidad | Clase mov. | MP | Visión | HP | Atk/Def | Turnos | Notas |

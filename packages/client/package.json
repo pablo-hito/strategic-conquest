@@ -1,0 +1,17 @@
+{
+  "name": "@sc/client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local hot-seat viewer for Strategic Conquest (Canvas 2D over @sc/core)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/build-standalone.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "vite": "^5.4.10"
+  }
+}
