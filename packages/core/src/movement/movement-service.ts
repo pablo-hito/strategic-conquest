@@ -1,5 +1,5 @@
 import type { Coord } from '../grid/coords.js';
-import type { PlayerId, UnitId } from '../shared/ids.js';
+import type { CityId, PlayerId, UnitId } from '../shared/ids.js';
 import { err, ok, type Result } from '../shared/result.js';
 import type { FogUpdate, PlayerFogMap } from '../visibility/fog-of-war.js';
 import type { WorldState } from '../world/world-state.js';
@@ -13,6 +13,8 @@ export type StopReason =
   | 'CONTACT'
   /** The unit boarded a transport. */
   | 'BOARDED'
+  /** The unit took a city (ends its turn). */
+  | 'CAPTURED'
   | 'NO_MOVES_LEFT'
   /** A step became illegal (usually something hidden in the fog was in the way). */
   | 'BLOCKED'
@@ -28,6 +30,8 @@ export interface MoveOutcome {
   readonly stoppedBy: StopReason;
   /** Why the next step was refused, when stoppedBy is BLOCKED. */
   readonly blockedBy?: StepError;
+  /** City taken by this move, if any. */
+  readonly captured?: CityId;
   /** Fog deltas to push to each player (only players whose view changed). */
   readonly fogUpdates: ReadonlyMap<PlayerId, FogUpdate>;
 }
@@ -68,6 +72,7 @@ export function moveUnit(
   let steps = 0;
   let stoppedBy: StopReason = 'COMPLETED';
   let blockedBy: StepError | undefined;
+  let captured: CityId | undefined;
 
   for (const next of path) {
     const r = checkStep(truth, unit, unit.position, next);
@@ -86,7 +91,16 @@ export function moveUnit(
 
     if (unit.carriedBy !== null) world.unload(unit.carriedBy, unit.id);
     world.stepUnit(unit.id, next, plan.cost);
-    if (plan.kind === 'board') world.load(plan.carrierId!, unit.id);
+    if (plan.kind === 'board') {
+      world.load(plan.carrierId!, unit.id);
+      unit.exhaustMoves();
+    }
+    if (plan.kind === 'capture') {
+      const city = world.cityAt(next)!;
+      world.captureCity(city.id, player);
+      unit.exhaustMoves();
+      captured = city.id;
+    }
     steps++;
 
     if (unit.fuel !== null && isRefuelPoint(truth, unit, unit.position)) unit.refuel();
@@ -99,8 +113,8 @@ export function moveUnit(
       stoppedBy = 'CRASHED';
       break;
     }
-    if (plan.kind === 'board') {
-      stoppedBy = 'BOARDED';
+    if (plan.kind === 'board' || plan.kind === 'capture') {
+      stoppedBy = plan.kind === 'board' ? 'BOARDED' : 'CAPTURED';
       break;
     }
     if (contact) {
@@ -119,6 +133,7 @@ export function moveUnit(
     position: unit.position,
     stoppedBy,
     ...(blockedBy ? { blockedBy } : {}),
+    ...(captured ? { captured } : {}),
     fogUpdates,
   });
 }

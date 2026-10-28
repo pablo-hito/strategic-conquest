@@ -71,16 +71,25 @@ src/
 - `truthKnowledge(world)`: la verdad. La usa el servidor al ejecutar y validar.
 - `fogKnowledge(world, fog)`: sólo lo que conoce el jugador. La usan los caminos, el overlay de alcance y los bots. Las casillas sin explorar se suponen transitables (costo 1) y los enemigos no detectados no existen, así planificar no filtra información.
 
-**Reglas de un paso (`checkStep`).** Adyacencia, límites, combustible, costo de terreno por clase de movimiento, enemigos en la casilla (eso es un ataque, no un movimiento) y ciudades ajenas (la captura será un comando aparte). Los barcos atracan en ciudades costeras propias. La tropa terrestre que pisa agua con un transporte propio con lugar *embarca* (y termina su movimiento); la que baja del transporte a tierra *desembarca*. En ciudades propias se mueve a costo 1 (rutas). Se permite apilar unidades propias sin límite por ahora.
+**Reglas de un paso (`checkStep`).** Adyacencia, límites, combustible, costo de terreno por clase de movimiento, enemigos en la casilla (eso es un ataque, no un movimiento) y ciudades ajenas: sólo infantería y mecanizada pueden entrar, y eso es una captura (ver 3c). Los barcos atracan en ciudades costeras propias. La tropa terrestre que pisa agua con un transporte propio con lugar *embarca* (y termina su movimiento); la que baja del transporte a tierra *desembarca*. En ciudades propias se mueve a costo 1 (rutas). Se permite apilar unidades propias sin límite por ahora.
 
 **Caminos multi-turno (`findPath`, A\*) y alcance (`reachableThisTurn`, Dijkstra).** El costo no es una suma simple por la regla de paso mínimo, así que el estado es *(turno, MP gastados en el turno)* ordenado por `g = turno·MP + gastados`. Un `g` menor siempre domina, por eso la búsqueda sigue siendo óptima: minimiza turnos y, a igualdad, deja más MP. Cada paso indica en qué turno se da (para dibujar marcadores de turno). Los aviones quedan limitados por el combustible.
 
 **Ejecución (`moveUnit`).** El cliente manda un camino; el servidor revalida cada paso contra la verdad, recalcula la niebla de **todos** los jugadores después de cada paso y se detiene:
 - `CONTACT`: apareció un enemigo nuevo (el jugador puede reaccionar con los MP que le quedan);
 - `BLOCKED`: algo oculto en la niebla cortó el camino;
-- `BOARDED`, `NO_MOVES_LEFT`, `CRASHED` (avión sin combustible fuera de una ciudad o portaaviones propio), o `COMPLETED`.
+- `CAPTURED`, `BOARDED`, `NO_MOVES_LEFT`, `CRASHED` (avión sin combustible fuera de una ciudad o portaaviones propio), o `COMPLETED`.
 
 Sólo el primer paso puede rechazar el comando entero; a partir de ahí la unidad se detiene donde está. Los aviones repostan al pasar por una ciudad propia o un portaaviones propio con lugar. Devuelve los deltas de niebla de cada jugador ya combinados (`mergeFogUpdates`), listos para enviar.
+
+## 3c. Captura y victoria
+
+**Captura = entrar.** Una unidad con `canCaptureCities` (infantería, mecanizada) que entra a una ciudad neutral o enemiga *sin defensores* la captura, y eso termina su turno. Si hay defensores, primero hay que eliminarlos (combate, Fase 3). Vale el asalto anfibio: la infantería puede capturar directamente desde un transporte adyacente. Al capturar, la producción se reinicia (infantería) y la especialización se conserva. La niebla se recalcula en el acto: el nuevo dueño gana la visión de la ciudad y el anterior la pierde, *sin enterarse del cambio de dueño* si no tiene otra forma de ver la ciudad. En los caminos, una ciudad ajena conocida es un destino válido pero también un final de recorrido.
+
+**Victoria (`evaluateVictory`).** Se evalúa después de cada captura o pérdida de unidades y al cerrar cada turno:
+- gana quien posea la proporción configurada de **todas** las ciudades del mapa, neutrales incluidas (`cityShareToWin`, 0.75 por defecto, 1 = conquista total);
+- queda eliminado quien no tenga ciudades **ni** unidades capaces de capturar (incluidas las embarcadas), porque ya no puede producir ni recuperarse;
+- si queda un solo jugador, gana por `last_standing`. Si todos caen a la vez no hay ganador (empate).
 
 ## 4. Valores iniciales de balance (tunables)
 
@@ -109,7 +118,7 @@ Especializaciones: *Industrial Hub* (−25% turnos para blindados/artillería/AA
 
 ## 5. Próximos pasos (Fase 1, continuación)
 1. ~~Movimiento: validación de pasos, caminos A\*, alcance, interrupción al contacto~~ (hecho).
-2. Captura de ciudades y embarque/desembarco anfibio sobre `WorldState`.
+2. ~~Captura de ciudades, asalto anfibio y condiciones de victoria~~ (hecho).
 3. Ciclo de turno: `startTurn` de unidades, producción, combustible (aterrizaje o derribo), suministro.
 4. Generador de mapas (Simplex + reparto equitativo de ciudades) con semilla reproducible.
 

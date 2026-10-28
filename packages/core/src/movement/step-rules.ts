@@ -10,7 +10,9 @@ export type StepKind =
   /** Land unit steps onto an own transport at sea; ends its movement. */
   | 'board'
   /** Carried land unit steps off its transport onto land. */
-  | 'disembark';
+  | 'disembark'
+  /** Capture-capable land unit walks into an empty neutral/enemy city; ends its move. */
+  | 'capture';
 
 export interface StepPlan {
   readonly cost: number;
@@ -50,14 +52,16 @@ export function checkStep(k: MapKnowledge, unit: Unit, from: Coord, to: Coord): 
     return err('ENEMY_PRESENT', 'tile is occupied by an enemy (attack instead)');
   }
 
+  const def = unit.def;
   const city = k.city(to);
   const ownCity = city !== null && city.owner === unit.owner;
   if (city && !ownCity) {
-    // Capture is a separate command (only for canCaptureCities units).
-    return err('CITY_NOT_OWNED', 'cannot enter a city you do not own');
+    // Defenders were ruled out above, so an infantry-type unit just walks in.
+    // Amphibious assaults (straight off a transport) are allowed.
+    if (def.canCaptureCities) return ok({ cost: 1, kind: 'capture' });
+    return err('CITY_NOT_OWNED', `${def.name} cannot capture cities`);
   }
 
-  const def = unit.def;
   switch (def.domain) {
     case 'air':
       return ok({ cost: tdef.moveCost.air, kind: 'move' });

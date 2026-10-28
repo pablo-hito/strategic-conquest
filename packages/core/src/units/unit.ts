@@ -153,6 +153,11 @@ export class Unit {
     return ok(undefined);
   }
 
+  /** Actions that end the unit's turn (capture, boarding). */
+  exhaustMoves(): void {
+    this.s.movesLeft = 0;
+  }
+
   /** Cargo follows its carrier without spending its own movement. */
   syncPositionWithCarrier(to: Coord): void {
     this.s.position = { ...to };

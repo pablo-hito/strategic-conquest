@@ -53,9 +53,9 @@ function startNode(k: MapKnowledge, unit: Unit): Node {
   };
 }
 
-/** Successors of a node; boarding ends a unit's move, so board nodes are leaves. */
+/** Successors of a node; boarding and capturing end a unit's move, so they are leaves. */
 function* successors(k: MapKnowledge, unit: Unit, n: Node): Generator<Node> {
-  if (n.kind === 'board' && n.prev !== null) return;
+  if (n.kind === 'board' || n.kind === 'capture') return;
   const M = unit.maxMoves;
   const fuel = unit.fuel;
   const here = k.grid.coordOf(n.idx);

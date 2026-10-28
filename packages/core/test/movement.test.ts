@@ -85,11 +85,14 @@ describe('checkStep', () => {
     expect(checkStep(k, inf, inf.position, { x: 3, y: 1 })).toMatchObject({ error: { code: 'NO_TRANSPORT_SPACE' } });
   });
 
-  it('does not let land units into enemy or neutral cities (capture is its own command)', () => {
+  it('turns entering a foreign city into a capture, only for capture-capable units', () => {
     const w = world();
     w.foundCity('Neutral', { x: 0, y: 2 });
+    const k = truthKnowledge(w);
     const inf = w.spawnUnit('infantry', P1, { x: 1, y: 2 });
-    expect(checkStep(truthKnowledge(w), inf, inf.position, { x: 0, y: 2 })).toMatchObject({
+    const recon = w.spawnUnit('recon', P1, { x: 1, y: 2 });
+    expect(checkStep(k, inf, inf.position, { x: 0, y: 2 })).toMatchObject({ ok: true, value: { kind: 'capture' } });
+    expect(checkStep(k, recon, recon.position, { x: 0, y: 2 })).toMatchObject({
       error: { code: 'CITY_NOT_OWNED' },
     });
   });
