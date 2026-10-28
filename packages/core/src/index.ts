@@ -20,3 +20,6 @@ export * from './movement/movement-service.js';
 export * from './match/victory.js';
 export * from './match/turn-rules.js';
 export * from './match/match.js';
+export * from './shared/rng.js';
+export * from './mapgen/simplex.js';
+export * from './mapgen/map-generator.js';

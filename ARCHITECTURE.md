@@ -38,6 +38,7 @@ src/
   visibility/  line-of-sight, vision, fog-of-war (PlayerFogMap), player-view
   movement/    reglas de paso, búsqueda de caminos, alcance, ejecución de movimientos
   match/       Match (orquestador de turnos y comandos), reglas de turno, victoria
+  mapgen/      generador procedural de archipiélagos (simplex + RNG con semilla)
 ```
 
 **Terreno como datos.** Cada terreno define dominio, elevación, *canopy*, bonus de visión, ocultamiento aéreo, bonus defensivo y costo de movimiento **por clase de movimiento** (`foot`, `wheeled`, `tracked`, `naval`, `naval_heavy`, `air`). Agregar una unidad no requiere tocar la tabla de terreno.
@@ -111,6 +112,27 @@ Sólo el primer paso puede rechazar el comando entero; a partir de ahí la unida
 
 **Eventos con audiencia.** Cada `TurnEvent` indica a quién se le puede contar (`audience`: un jugador o `all`): la producción, los derribos y los avisos de suministro son privados; eliminaciones y victoria son públicas.
 
+## 3e. Generación de mapas
+
+`generateMap(settings, players)` devuelve un `WorldState` listo para `Match.start`, las capitales y un informe. **Todo depende de la semilla** (`Rng` sfc32 + hash cyrb128; `core` nunca usa `Math.random`): la misma semilla da el mismo mapa, lo que permite compartir mapas y reproducir partidas.
+
+| Opción | Valores |
+|---|---|
+| Tamaño | Small 60×40, Medium 100×64, Huge 160×100 (o a medida) |
+| Densidad de islas | sparse 22% de tierra, normal 32%, dense 42% |
+| Ciudades | ≈1 cada 18 casillas de tierra (configurable) |
+| Unidades iniciales | por defecto una infantería en la capital |
+
+**Pasos:**
+1. Relieve con ruido simplex fractal (islas de ≈11 casillas de diámetro) y un borde de océano; el nivel del mar se fija en el percentil exacto que da la proporción de tierra pedida.
+2. Se hunden los islotes de menos de 3 casillas. Lo más alto se vuelve montaña (6%) y colina (12%); un segundo campo de "humedad" planta bosques; el agua junto a la costa es poco profunda.
+3. Ciudades: se ordenan los sitios por calidad (costa > llanura, con algo de azar) y se aceptan con una separación mínima de 3; nunca en montañas.
+4. Capitales: entre ciudades costeras de islas con lugar para al menos otra ciudad. Se eligen con muestreo del punto más lejano desde 24 arranques al azar y luego se refinan moviendo cada capital a ciudades cercanas mientras mejore el puntaje.
+5. **Puntaje de equidad:** cada ciudad neutral cuenta para la capital más cercana, con peso `exp(-distancia/10)`; equilibrio = potencial del más débil / del más fuerte. Se penalizan capitales demasiado juntas.
+6. Si el equilibrio no llega a 0.8, se regenera el mapa entero con otra rama de la semilla (hasta 12 intentos) y se queda el mejor.
+
+Medido sobre 15 semillas por combinación (3 tamaños × 3 densidades × 2/4/6 jugadores): ninguna falla, equilibrio mínimo 0.67–0.94 y mediana 0.81–0.99; un mapa Huge para 6 jugadores tarda <100 ms.
+
 ## 4. Valores iniciales de balance (tunables)
 
 | Unidad | Clase mov. | MP | Visión | HP | Atk/Def | Turnos | Notas |
@@ -140,6 +162,12 @@ Especializaciones: *Industrial Hub* (−25% turnos para blindados/artillería/AA
 1. ~~Movimiento: validación de pasos, caminos A\*, alcance, interrupción al contacto~~ (hecho).
 2. ~~Captura de ciudades, asalto anfibio y condiciones de victoria~~ (hecho).
 3. ~~Ciclo de turno: producción, reparación, combustible, aterrizaje en portaaviones, suministro, rotación y victoria~~ (hecho).
-4. Generador de mapas (Simplex + reparto equitativo de ciudades) con semilla reproducible.
+4. ~~Generador de mapas con semilla reproducible y reparto equitativo~~ (hecho). **Fase 1 completa.**
+
+## 6. Fase 2 (siguiente)
+1. `packages/protocol`: mensajes cliente↔servidor tipados y validados (zod), versionados.
+2. `packages/server`: Fastify + `ws`; salas con código de invitación, configuración de mapa, `Match` en memoria + persistencia de snapshots, deltas de niebla por jugador, reconexión, reloj de turno.
+3. IDs opacos por observador en `PlayerView`.
+4. Bot simple de reemplazo para jugadores desconectados (usa `PlayerView` + `findPath`).
 
 Pendientes de diseño anotados: límites de apilamiento y zonas de control (no están en la especificación, se pueden sumar en `checkStep`). Además, los IDs secuenciales filtran cuántas unidades produjo un rival; antes de la Fase 2 conviene usar IDs opacos por observador en `PlayerView`.
