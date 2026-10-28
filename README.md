@@ -3,7 +3,8 @@
 Remake moderno y multijugador (2–6 jugadores) del clásico de estrategia por turnos de Macintosh.
 
 - `packages/core`: modelo de dominio puro en TypeScript (grilla, terreno, unidades, ciudades, niebla de guerra, movimiento, captura, ciclo de turno y generador de mapas).
-- `packages/client`: visor jugable en Canvas 2D. Partida local por turnos (hot-seat) para 2 a 6 jugadores; cada uno ve sólo su propia niebla de guerra.
+- `packages/ai`: bot que juega un turno usando sólo su propia niebla de guerra.
+- `packages/client`: visor jugable en Canvas 2D, contra la computadora o entre humanos en la misma pantalla (2 a 6 jugadores); cada uno ve sólo su propia niebla de guerra.
 
 Ver [ARCHITECTURE.md](ARCHITECTURE.md) para las decisiones de diseño y la hoja de ruta.
 

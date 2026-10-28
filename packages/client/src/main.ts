@@ -17,10 +17,10 @@ import {
   type CityId,
   type UnitTypeId,
 } from '@sc/core';
-import { SPECIALIZATION_NAME, TERRAIN_NAME, UNIT_CODE, UNIT_NAME, playerName } from './labels.js';
+import { SPECIALIZATION_NAME, TERRAIN_NAME, UNIT_CODE, UNIT_NAME } from './labels.js';
 import { FACTION, NEUTRAL } from './palette.js';
 import { MapRenderer, drawMinimap, type Camera } from './renderer.js';
-import { GameSession, type NewGameOptions, type SavedSession } from './session.js';
+import { GameSession, type GameMode, type NewGameOptions, type SavedSession } from './session.js';
 
 const SAVE_KEY = 'strategic-conquest:save:v1';
 const SEED_WORDS = ['tidewater', 'basalt', 'meridian', 'coral', 'halcyon', 'riptide', 'atoll', 'monsoon', 'saltmarsh', 'longitude', 'fathom', 'leeward'];
@@ -114,7 +114,7 @@ class App {
   }
 
   private defaultOptions(): NewGameOptions {
-    return { size: 'small', density: 'normal', players: 2, seed: randomSeed() };
+    return { size: 'small', density: 'normal', players: 2, seed: randomSeed(), mode: 'bots' };
   }
 
   private focusViewer(): void {
@@ -333,7 +333,7 @@ class App {
       <div class="brand">Strategic <span>Conquest</span></div>
       <div class="readout">
         <span>Ronda <b>${s.match.round}</b></span>
-        <span class="chip" style="--faction:${this.factionOf(p)}">${esc(playerName(s.playerIndex(p)))}</span>
+        <span class="chip" style="--faction:${this.factionOf(p)}">${esc(s.nameOf(p))}</span>
         <span>Ciudades <b>${s.world.citiesOf(p).length}</b>/${[...s.world.allCities()].length}</span>
         <span>Por mover <b>${idle}</b></span>
       </div>
@@ -502,7 +502,7 @@ class App {
     const city = view.knownCities.find((k) => sameCoord(k.position, at));
     const foreign = view.foreignUnits.filter((u) => sameCoord(u.position, at));
     const ghosts = view.ghosts.filter((g) => sameCoord(g.position, at));
-    const owner = (p: PlayerId | null) => (p ? playerName(this.session.playerIndex(p)) : 'Neutral');
+    const owner = (p: PlayerId | null) => (p ? this.session.nameOf(p) : 'Neutral');
     this.selPanel.innerHTML = `<h2>Casilla</h2>
       <div class="title-row"><h3>${code === UNKNOWN_TERRAIN ? 'Sin explorar' : TERRAIN_NAME[TERRAINS[code]!]}</h3><span class="code">X${at.x} Y${at.y}</span></div>
       ${city ? `<p class="muted"><b style="color:${this.factionOf(city.owner)}">${esc(city.name)}</b> · ${owner(city.owner)} · vista en la ronda ${city.lastSeenTurn}</p>` : ''}
@@ -528,7 +528,7 @@ class App {
       o.innerHTML = `<div class="sheet handoff" style="--faction:${this.factionOf(w)}">
         <div class="stripe"></div>
         <p class="muted">Partida terminada · ronda ${s.match.round}</p>
-        <div class="big">${w ? esc(playerName(s.playerIndex(w))) : 'Empate'}</div>
+        <div class="big">${w ? esc(s.nameOf(w)) : 'Empate'}</div>
         <p class="muted">${w ? 'gana la campaña' : 'No quedó nadie en pie.'}</p>
         <div class="row"><button class="btn primary" type="button" data-act="new">Nueva partida</button><button class="btn" type="button" data-act="look">Ver el mapa</button></div></div>`;
       o.querySelector('[data-act=new]')!.addEventListener('click', () => this.showSetup());
@@ -542,7 +542,7 @@ class App {
       o.innerHTML = `<div class="sheet handoff" style="--faction:${this.factionOf(p)}">
         <div class="stripe"></div>
         <p class="muted">Ronda ${s.match.round} · pasá el control</p>
-        <div class="big">${esc(playerName(s.playerIndex(p)))}</div>
+        <div class="big">${esc(s.nameOf(p))}</div>
         <p class="muted">El mapa queda oculto hasta que el jugador correcto esté frente a la pantalla.</p>
         <button class="btn primary" type="button" data-act="begin">Empezar turno</button></div>`;
       const b = o.querySelector<HTMLButtonElement>('[data-act=begin]')!;
@@ -562,12 +562,13 @@ class App {
     const opt = (v: string, label: string, cur?: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
     o.innerHTML = `<form class="sheet" id="setup">
       <h2>Nueva partida</h2>
-      <p class="muted">Partida local por turnos: los jugadores se turnan frente a esta pantalla. Cada uno ve sólo lo que descubrieron sus unidades.</p>
+      <p class="muted">Cada jugador ve sólo lo que descubrieron sus unidades. Contra la computadora jugás como Jugador 1; entre humanos, se turnan frente a esta pantalla.</p>
       <div class="grid2">
+        <label class="field" for="mode">Rivales<select id="mode">${opt('bots', 'Contra la computadora', prev?.mode ?? 'bots')}${opt('hotseat', 'Humanos en esta pantalla', prev?.mode ?? 'bots')}</select></label>
         <label class="field" for="size">Tamaño del mapa<select id="size">${opt('small', 'Small · 60×40', prev?.size)}${opt('medium', 'Medium · 100×64', prev?.size)}${opt('huge', 'Huge · 160×100', prev?.size)}</select></label>
         <label class="field" for="density">Densidad de islas<select id="density">${opt('sparse', 'Escasa · 22% tierra', prev?.density)}${opt('normal', 'Normal · 32% tierra', prev?.density ?? 'normal')}${opt('dense', 'Densa · 42% tierra', prev?.density)}</select></label>
         <label class="field" for="players">Jugadores<select id="players">${[2, 3, 4, 5, 6].map((n) => opt(String(n), `${n} jugadores`, String(prev?.players ?? 2))).join('')}</select></label>
-        <label class="field" for="seed">Semilla del mapa<input type="text" id="seed" value="${esc(randomSeed())}" autocomplete="off" spellcheck="false" /></label>
+        <label class="field wide" for="seed">Semilla del mapa<input type="text" id="seed" value="${esc(randomSeed())}" autocomplete="off" spellcheck="false" /></label>
       </div>
       <p class="muted">La misma semilla genera siempre el mismo mapa: compartila para jugar la misma geografía.</p>
       <div class="row"><button class="btn primary" type="submit">Generar y jugar</button><button class="btn" type="button" data-act="cancel">Cancelar</button></div>
@@ -577,7 +578,13 @@ class App {
       e.preventDefault();
       const v = (id: string) => (form.querySelector(`#${id}`) as HTMLInputElement).value;
       delete o.dataset.setup;
-      this.newGame({ size: v('size') as MapSize, density: v('density') as IslandDensity, players: Number(v('players')), seed: v('seed').trim() || randomSeed() });
+      this.newGame({
+        size: v('size') as MapSize,
+        density: v('density') as IslandDensity,
+        players: Number(v('players')),
+        seed: v('seed').trim() || randomSeed(),
+        mode: v('mode') as GameMode,
+      });
     });
     o.querySelector('[data-act=cancel]')!.addEventListener('click', () => {
       delete o.dataset.setup;

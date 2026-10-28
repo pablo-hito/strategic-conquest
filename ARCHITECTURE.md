@@ -160,13 +160,32 @@ Medido sobre 15 semillas por combinación (3 tamaños × 3 densidades × 2/4/6 j
 
 Valores de referencia (unidades sanas, en llanura): infantería vs infantería −4 / contraataque −3,5; tanque vs infantería −8,6 / −1,2; tanque vs tanque −5,7 / −4,8; submarino vs portaaviones −9,7 de 16; antiaéreo vs CAS −6,1 de 8.
 
+## 3h. Bot (`packages/ai`)
+
+`playBotTurn(match, jugador)` juega un turno completo con los mismos comandos de `Match` que usa un humano y decide **sólo con su propia niebla de guerra** (ciudades conocidas, unidades detectadas, casillas exploradas). No puede ver a través de la niebla: las rutas se planifican con `fogKnowledge` y los objetivos salen de lo que el jugador conoce. Es determinista: la misma partida produce siempre las mismas jugadas. El servidor lo usará para reemplazar a jugadores desconectados.
+
+**Prioridades por unidad:**
+1. Tomar ataques favorables desde donde está (daño infligido ≥ 1,2 × daño recibido, o destruir al defensor; nunca un ataque suicida).
+2. Infantería: defender ciudades propias amenazadas; capturar la ciudad ajena conocida más cercana alcanzable por tierra; si no, explorar su isla; si no queda nada, subir a un transporte o esperarlo.
+3. Tanques: acercarse a enemigos terrestres conocidos; cuando la isla está resuelta, también se embarcan y desembarcan junto a ciudades enemigas.
+4. Transportes: esperar en el puerto más cercano a la tropa ociosa y, con carga, navegar hasta la costa enemiga conocida más cercana (o explorar).
+5. Destructores: cazar barcos enemigos conocidos; si no, llevar la pelea a la costa enemiga; si no, explorar el mar.
+6. Cazas: salidas de exploración dentro de la mitad de su autonomía y vuelta a la base al turno siguiente.
+
+**Producción:** infantería (con un tanque cada cuatro) mientras la isla tenga trabajo; con tropa ociosa, transportes en proporción; después destructores (1 cada 3 ciudades) y cazas (1 cada 5). El bot recuerda entre turnos cuántas unidades quedaron ociosas, y nunca cambia una orden que ya tiene progreso.
+
+**Rendimiento:** antes de buscar rutas, el bot agrupa la tierra explorada en masas de tierra y sólo busca destinos alcanzables desde la de cada unidad; además las búsquedas se cortan a 12 turnos (`findPath(..., { maxTurns })`). Un turno típico tarda 5–100 ms, y bajo 1 s en partidas largas con cientos de unidades.
+
+**Limitación conocida:** dos bots iguales tienden a empatar a mitad de partida y acumular ejércitos grandes. No es un problema del bot sino de la economía: unas 20 ciudades producen varias unidades por turno y nada las consume. Una regla de mantenimiento o de suministro por ciudad lo resolvería (pendiente de diseño).
+
 ## 3f. Visor local (`packages/client`)
 
 Primer cliente: Vite + TypeScript + Canvas 2D, sin framework. Juega partidas locales por turnos (hot-seat) usando `Match` exactamente como lo hará el servidor, y **sólo dibuja el `PlayerView` del jugador activo**: entre turnos una pantalla opaca oculta el mapa hasta que el siguiente jugador toma el control.
 
 - `session.ts`: sesión de juego sin DOM (comandos, órdenes de varios turnos "ir a", registro de eventos filtrado por audiencia, guardado). Tiene tests propios.
 - `renderer.ts`: mapa con zoom y desplazamiento, costas, relieve, niebla (negro = sin explorar, velo = recordado), ciudades y fichas cuya forma indica el dominio (cuadrado = tierra, casco = mar, rombo = aire), alcance del turno y ruta con marcadores de turno; minimapa.
-- `main.ts`: interfaz (panel de unidad y de ciudad con producción y especialización, registro táctico, nueva partida con semilla), mouse, teclado y gestos táctiles. Autoguardado en `localStorage`.
+- `main.ts`: interfaz (panel de unidad y de ciudad con producción y especialización, registro táctico, nueva partida con semilla y rivales: computadora o humanos), mouse, teclado y gestos táctiles. Autoguardado en `localStorage`.
+- Contra la computadora, al terminar el turno juegan los bots y vuelve a ser tu turno; sin pantalla de cambio de jugador porque no hay a quién ocultarle el mapa.
 - `scripts/build-standalone.mjs`: empaqueta todo en un único HTML.
 
 Con una unidad seleccionada, los enemigos atacables se marcan en rojo; al pasar el cursor se ve el pronóstico de daño y con un clic se ataca.
@@ -206,6 +225,6 @@ Especializaciones: *Industrial Hub* (−25% turnos para blindados/artillería/AA
 1. `packages/protocol`: mensajes cliente↔servidor tipados y validados (zod), versionados.
 2. `packages/server`: Fastify + `ws`; salas con código de invitación, configuración de mapa, `Match` en memoria + persistencia de snapshots, deltas de niebla por jugador, reconexión, reloj de turno.
 3. IDs opacos por observador en `PlayerView`.
-4. Bot simple de reemplazo para jugadores desconectados (usa `PlayerView` + `findPath`).
+4. ~~Bot simple~~ (hecho, `packages/ai`): falta conectarlo al servidor para reemplazar a jugadores desconectados.
 
 Pendientes de diseño anotados: límites de apilamiento y zonas de control (no están en la especificación, se pueden sumar en `checkStep`). Además, los IDs secuenciales filtran cuántas unidades produjo un rival; antes de la Fase 2 conviene usar IDs opacos por observador en `PlayerView`.

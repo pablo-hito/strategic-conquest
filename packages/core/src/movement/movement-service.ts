@@ -32,6 +32,8 @@ export interface MoveOutcome {
   readonly blockedBy?: StepError;
   /** City taken by this move, if any. */
   readonly captured?: CityId;
+  /** Who owned the captured city before (null = it was neutral). */
+  readonly capturedFrom?: PlayerId | null;
   /** Fog deltas to push to each player (only players whose view changed). */
   readonly fogUpdates: ReadonlyMap<PlayerId, FogUpdate>;
 }
@@ -73,6 +75,7 @@ export function moveUnit(
   let stoppedBy: StopReason = 'COMPLETED';
   let blockedBy: StepError | undefined;
   let captured: CityId | undefined;
+  let capturedFrom: PlayerId | null = null;
 
   for (const next of path) {
     const r = checkStep(truth, unit, unit.position, next);
@@ -97,6 +100,7 @@ export function moveUnit(
     }
     if (plan.kind === 'capture') {
       const city = world.cityAt(next)!;
+      capturedFrom = city.owner;
       world.captureCity(city.id, player);
       unit.exhaustMoves();
       captured = city.id;
@@ -105,11 +109,11 @@ export function moveUnit(
 
     if (unit.fuel !== null && isRefuelPoint(truth, unit, unit.position)) unit.refuel();
 
-    const contact = refreshFog(ctx, allies, fogUpdates, player);
+    const contact = refreshFog(ctx, allies, fogUpdates, player, 'mover');
 
     if (unit.isOutOfFuel) {
       world.removeUnit(unit.id);
-      refreshFog(ctx, allies, fogUpdates, player);
+      refreshFog(ctx, allies, fogUpdates, player, 'mover');
       stoppedBy = 'CRASHED';
       break;
     }
@@ -127,29 +131,36 @@ export function moveUnit(
     }
   }
 
+  // Other players only need the end state: one refresh for everyone after the move.
+  refreshFog(ctx, allies, fogUpdates, player, 'all');
+
   return ok({
     unitId,
     stepsTaken: steps,
     position: unit.position,
     stoppedBy,
     ...(blockedBy ? { blockedBy } : {}),
-    ...(captured ? { captured } : {}),
+    ...(captured ? { captured, capturedFrom } : {}),
     fogUpdates,
   });
 }
 
 /**
- * Update every fog map and merge the deltas. Returns true if the mover's side
- * spotted a new enemy unit.
+ * Update fog maps and merge the deltas. Returns true if the mover's side spotted a
+ * new enemy unit. During a move only the mover's side is refreshed per step (that is
+ * all contact detection needs); everyone else is refreshed once at the end.
  */
 function refreshFog(
   ctx: MoveContext,
   allies: (p: PlayerId) => ReadonlySet<PlayerId>,
   acc: Map<PlayerId, FogUpdate>,
   mover: PlayerId,
+  scope: 'mover' | 'all',
 ): boolean {
   let contact = false;
+  const moverSide = allies(mover);
   for (const [player, fog] of ctx.fogs) {
+    if (scope === 'mover' && !moverSide.has(player)) continue;
     const group = allies(player);
     const u = fog.update(ctx.world, group);
     if (player === mover) {

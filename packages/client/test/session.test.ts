@@ -91,6 +91,29 @@ describe('GameSession (hot-seat)', () => {
     expect(s.visibleLog().some((e) => /enemigo atacó tu Infantería/.test(e.text))).toBe(true);
   });
 
+  it('against the computer: bots play their turns and it is your turn again, no handoff', () => {
+    const s = GameSession.create({ ...opts, mode: 'bots', players: 3 });
+    const me = s.viewer;
+    expect(s.nameOf(s.players[1]!)).toBe('Jugador 2 (bot)');
+    for (let i = 0; i < 25; i++) {
+      s.endTurn();
+      expect(s.awaitingHandoff).toBe(false);
+      expect(s.viewer).toBe(me);
+    }
+    expect(s.match.round).toBe(26);
+    // The bots did expand: they own more than their capitals by now.
+    const botCities = s.players.slice(1).reduce((n, p) => n + s.world.citiesOf(p).length, 0);
+    expect(botCities).toBeGreaterThan(2);
+    // And the log only shows the human what the human is allowed to know.
+    expect(s.visibleLog().every((e) => e.audience === 'all' || e.audience === me)).toBe(true);
+  });
+
+  it('restores the game mode from a save', () => {
+    const s = GameSession.create({ ...opts, mode: 'bots' });
+    const copy = GameSession.restore(JSON.parse(JSON.stringify(s.save())));
+    expect([...copy.bots]).toEqual([...s.bots]);
+  });
+
   it('round-trips through a save', () => {
     const s = GameSession.create(opts);
     for (let i = 0; i < 6; i++) playTurn(s);

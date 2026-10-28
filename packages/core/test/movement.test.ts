@@ -162,6 +162,14 @@ describe('findPath', () => {
     expect(path.steps.map((s) => s.turn)).toEqual([1, 2]);
   });
 
+  it('gives up on routes longer than maxTurns', () => {
+    const w = new WorldState(Grid.filled(12, 1, 'plains'));
+    const inf = w.spawnUnit('infantry', P1, { x: 0, y: 0 });
+    const k = truthKnowledge(w);
+    expect(findPath(k, inf, { x: 5, y: 0 }, { maxTurns: 5 })?.turns).toBe(5);
+    expect(findPath(k, inf, { x: 6, y: 0 }, { maxTurns: 5 })).toBeNull();
+  });
+
   it('returns null when unreachable and plans a boarding as the last step', () => {
     const w = new WorldState(Grid.fromAscii(['..~~..']));
     const inf = w.spawnUnit('infantry', P1, { x: 0, y: 0 });

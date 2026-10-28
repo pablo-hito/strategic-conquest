@@ -152,6 +152,8 @@ describe('Match (sequential mode)', () => {
     expect(match.status).toBe('playing'); // 2 of 4 cities
     const r = unwrap(match.move(P1, inf.id, [{ x: 4, y: 0 }]));
     expect(r.captured).toBeDefined();
+    // Both the captor and the previous owner are told.
+    expect(r.events.filter((e) => e.type === 'city_captured').map((e) => e.audience)).toEqual([P1, P2]);
     // 3 of 4 = 75%, and P2 survives thanks to its infantry: a city-share win.
     expect(r.events).toContainEqual({ type: 'match_won', audience: 'all', player: P1, reason: 'city_share' });
     expect(match.status).toBe('finished');
@@ -192,6 +194,22 @@ describe('Match (sequential mode)', () => {
     expect(fog.get(P2)?.unitsLost).toContain(sub.id);
     expect(sub.maxMoves).toBe(1);
     expect(match.setSilentRunning(P2, sub.id, false)).toMatchObject({ ok: false, error: { code: 'NOT_YOUR_TURN' } });
+  });
+
+  it('boards a transport docked in a port city', () => {
+    const w = new WorldState(Grid.fromAscii(['..~~']));
+    w.foundCity('Port', { x: 1, y: 0 }).capture(P1);
+    w.foundCity('Far', { x: 0, y: 0 }).capture(P2);
+    const tr = w.spawnUnit('transport', P1, { x: 1, y: 0 });
+    const inf = w.spawnUnit('infantry', P1, { x: 1, y: 0 });
+    const tank = w.spawnUnit('heavy_tank', P1, { x: 1, y: 0 });
+    const { match } = Match.start(w, [P1, P2]);
+    expect(match.board(P1, inf.id, tank.id)).toMatchObject({ ok: false, error: { code: 'CARGO_NOT_ACCEPTED' } });
+    expect(match.board(P1, inf.id, tr.id).ok).toBe(true);
+    expect(inf.carriedBy).toBe(tr.id);
+    expect(inf.movesLeft).toBe(0);
+    unwrap(match.move(P1, tr.id, [{ x: 2, y: 0 }]));
+    expect(inf.position).toEqual({ x: 2, y: 0 });
   });
 
   it('round-trips through a snapshot mid-game', () => {

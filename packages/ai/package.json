@@ -1,0 +1,12 @@
+{
+  "name": "@sc/ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Strategic Conquest bot: plays a turn through the Match API using only its own fog-of-war knowledge",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  }
+}

@@ -296,6 +296,7 @@ select option:disabled { color: var(--fg-faint); }
   text-wrap: balance;
 }
 .sheet .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.sheet .grid2 .wide { grid-column: 1 / -1; }
 .handoff { text-align: center; align-items: center; }
 .handoff .big {
   font: 700 clamp(2rem, 7vw, 3.4rem)/1 var(--font-display);

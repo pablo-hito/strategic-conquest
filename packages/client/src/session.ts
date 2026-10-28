@@ -26,13 +26,18 @@ import {
   type UnitId,
   type UnitTypeId,
 } from '@sc/core';
+import { playBotTurn } from '@sc/ai';
 import { STOP_TEXT, UNIT_NAME, playerName } from './labels.js';
+
+/** 'bots': player 1 is you, everyone else is the computer. 'hotseat': all humans. */
+export type GameMode = 'bots' | 'hotseat';
 
 export interface NewGameOptions {
   readonly size: MapSize;
   readonly density: IslandDensity;
   readonly players: number;
   readonly seed: string;
+  readonly mode?: GameMode;
 }
 
 export type Tone = 'info' | 'good' | 'warn' | 'bad';
@@ -67,11 +72,15 @@ export class GameSession {
   readonly skipped = new Set<UnitId>();
   awaitingHandoff = false;
   private cachedView: PlayerView | null = null;
+  /** Players the computer controls. */
+  readonly bots: ReadonlySet<PlayerId>;
 
   private constructor(
     readonly options: NewGameOptions,
     readonly match: Match,
-  ) {}
+  ) {
+    this.bots = new Set(options.mode === 'bots' ? match.order.slice(1) : []);
+  }
 
   static create(options: NewGameOptions): GameSession {
     const players = Array.from({ length: options.players }, (_, i) => PlayerId(`p${i + 1}`));
@@ -110,6 +119,15 @@ export class GameSession {
 
   playerIndex(p: PlayerId): number {
     return this.players.indexOf(p);
+  }
+
+  nameOf(p: PlayerId): string {
+    return `${playerName(this.playerIndex(p))}${this.bots.has(p) ? ' (bot)' : ''}`;
+  }
+
+  /** Humans sharing the screen: the handoff screen only matters with more than one. */
+  get humanCount(): number {
+    return this.players.length - this.bots.size;
   }
 
   /** What the active player is allowed to see, rebuilt only when state changes. */
@@ -209,11 +227,10 @@ export class GameSession {
       this.orders.set(id, goal);
       return `Orden guardada: llega en ${plan.turns - 1} turno(s).`;
     }
-    const previousOwners = new Map(now.map((c) => [`${c.x},${c.y}`, this.world.cityAt(c)?.owner ?? null]));
     const r = this.match.move(this.viewer, id, now);
     this.invalidate();
     if (!r.ok) return `Movimiento rechazado: ${r.error.message}`;
-    this.reportMove(unit, r.value, previousOwners);
+    this.reportMove(unit, r.value);
     const arrived = r.value.position.x === goal.x && r.value.position.y === goal.y;
     if (!arrived && r.value.stoppedBy === 'COMPLETED' && this.world.unit(id)) this.orders.set(id, goal);
     if (!arrived && r.value.stoppedBy === 'NO_MOVES_LEFT' && this.world.unit(id)) this.orders.set(id, goal);
@@ -250,8 +267,23 @@ export class GameSession {
     if (!r.ok) return;
     this.skipped.clear();
     this.pushEvents(r.value.events);
+    this.runBots();
     this.invalidate();
-    if (this.match.status === 'playing') this.awaitingHandoff = true;
+    if (this.match.status !== 'playing') return;
+    // Alone against the computer there is nobody to hide the map from.
+    if (this.humanCount > 1) this.awaitingHandoff = true;
+    else this.beginTurn();
+  }
+
+  /** Let every computer player whose turn comes up play it, until a human is next. */
+  private runBots(): void {
+    for (let guard = 0; guard < this.players.length; guard++) {
+      const p = this.match.activePlayer;
+      if (!p || !this.bots.has(p) || this.match.status !== 'playing') return;
+      this.pushEvents(playBotTurn(this.match, p).events);
+      const r = this.match.endTurn(p);
+      if (r.ok) this.pushEvents(r.value.events);
+    }
   }
 
   /** The next player took the seat: resume their standing orders. */
@@ -302,19 +334,8 @@ export class GameSession {
     }
   }
 
-  private reportMove(
-    unit: Unit,
-    out: MoveOutcome & { events: TurnEvent[] },
-    previousOwners: ReadonlyMap<string, PlayerId | null>,
-  ): void {
+  private reportMove(unit: Unit, out: MoveOutcome & { events: TurnEvent[] }): void {
     const me = this.viewer;
-    if (out.captured) {
-      const city = this.world.city(out.captured)!;
-      this.push(me, `Capturaste ${city.name}.`, 'good');
-      // An owner always learns it lost a city, even without eyes on it.
-      const before = previousOwners.get(`${city.position.x},${city.position.y}`);
-      if (before) this.push(before, `Perdiste ${city.name}.`, 'bad');
-    }
     if (out.stoppedBy === 'CRASHED') {
       this.orders.delete(unit.id);
       this.push(me, `${this.unitLabel(unit.type, unit.id)} ${STOP_TEXT.CRASHED}`, 'bad');
@@ -342,16 +363,23 @@ export class GameSession {
         case 'out_of_supply':
           this.push(e.audience, `Una unidad está sin suministro (${e.turns} turno${e.turns === 1 ? '' : 's'}).`, 'warn');
           break;
+        case 'city_captured': {
+          const city = this.world.city(e.city);
+          const name = city?.name ?? 'una ciudad';
+          if (e.audience === e.by) this.push(e.audience, `Capturaste ${name}.`, 'good');
+          else this.push(e.audience, `${this.nameOf(e.by)} te capturó ${name}.`, 'bad');
+          break;
+        }
         case 'combat':
           this.pushCombat(e.audience, e.result);
           break;
         case 'player_eliminated':
-          this.push('all', `${playerName(this.playerIndex(e.player))} fue eliminado.`, 'bad');
+          this.push('all', `${this.nameOf(e.player)} fue eliminado.`, 'bad');
           break;
         case 'match_won':
           this.push(
             'all',
-            `${playerName(this.playerIndex(e.player))} gana la partida ${e.reason === 'city_share' ? 'por control de ciudades' : 'por ser el último en pie'}.`,
+            `${this.nameOf(e.player)} gana la partida ${e.reason === 'city_share' ? 'por control de ciudades' : 'por ser el último en pie'}.`,
             'good',
           );
           break;

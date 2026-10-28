@@ -29,7 +29,10 @@ describe('city capture', () => {
     const city = w.foundCity('Alpha', { x: 2, y: 0 });
     const inf = w.spawnUnit('mech_infantry', P1, { x: 1, y: 0 });
     const r = moveUnit(ctxFor(w), P1, inf.id, [{ x: 2, y: 0 }, { x: 3, y: 0 }]);
-    expect(r).toMatchObject({ ok: true, value: { stoppedBy: 'CAPTURED', captured: city.id, stepsTaken: 1 } });
+    expect(r).toMatchObject({
+      ok: true,
+      value: { stoppedBy: 'CAPTURED', captured: city.id, capturedFrom: null, stepsTaken: 1 },
+    });
     expect(city.owner).toBe(P1);
     expect(city.production).toEqual({ unit: 'infantry', progress: 0 });
     expect(inf.position).toEqual({ x: 2, y: 0 });

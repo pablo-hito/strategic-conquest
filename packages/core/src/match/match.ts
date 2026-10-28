@@ -95,8 +95,14 @@ export class Match {
     if (!turn.ok) return turn;
     const r = moveUnit({ world: this.world, fogs: this.fogs }, player, unitId, path);
     if (!r.ok) return r;
+    const events: TurnEvent[] = [];
+    if (r.value.captured) {
+      const from = r.value.capturedFrom ?? null;
+      events.push({ type: 'city_captured', audience: player, city: r.value.captured, by: player, from });
+      if (from) events.push({ type: 'city_captured', audience: from, city: r.value.captured, by: player, from });
+    }
     // Captures and crashes can end the game (or knock the mover out) mid-turn.
-    const events = r.value.captured || r.value.stoppedBy === 'CRASHED' ? this.checkVictory() : [];
+    if (r.value.captured || r.value.stoppedBy === 'CRASHED') events.push(...this.checkVictory());
     if (this._status === 'playing' && !this.alive.includes(player)) {
       this.advance();
       events.push(...beginPlayerTurn(this.world, this.activePlayer!));
@@ -142,6 +148,28 @@ export class Match {
     const city = this.ownCity(player, cityId);
     if (!city.ok) return city;
     return city.value.setSpecialization(spec);
+  }
+
+  /**
+   * Board a carrier on the same tile (typically a transport docked in a port city).
+   * Boarding from the shore onto a transport at sea is a normal move instead.
+   * Like any boarding, it ends the unit's movement for the turn.
+   */
+  board(player: PlayerId, unitId: UnitId, carrierId: UnitId): Result<void, string> {
+    const turn = this.checkTurn(player);
+    if (!turn.ok) return turn;
+    const unit = this.world.unit(unitId);
+    const carrier = this.world.unit(carrierId);
+    if (!unit || !carrier) return err('UNKNOWN_UNIT', 'unknown unit');
+    if (unit.owner !== player || carrier.owner !== player) return err('NOT_YOUR_UNIT', 'you can only board your own units');
+    if (unit.position.x !== carrier.position.x || unit.position.y !== carrier.position.y) {
+      return err('NOT_SAME_TILE', 'the carrier must be on the same tile');
+    }
+    if (unit.movesLeft <= 0) return err('NO_MOVES_LEFT', 'unit has no moves left');
+    const r = this.world.load(carrierId, unitId);
+    if (!r.ok) return r;
+    unit.exhaustMoves();
+    return ok(undefined);
   }
 
   /** Toggle silent running; refreshes fog because stealth changes what enemies see. */

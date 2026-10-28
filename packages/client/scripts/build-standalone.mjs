@@ -13,7 +13,7 @@ const result = await build({
   target: 'es2020',
   minify: true,
   write: false,
-  alias: { '@sc/core': here('../../core/src/index.ts') },
+  alias: { '@sc/core': here('../../core/src/index.ts'), '@sc/ai': here('../../ai/src/index.ts') },
   legalComments: 'none',
 });
 const js = result.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');

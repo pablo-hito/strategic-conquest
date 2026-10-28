@@ -77,12 +77,20 @@ function toPath(k: MapKnowledge, end: Node): PlannedPath {
   return { steps, turns: (steps.at(-1)?.turn ?? 0) + 1 };
 }
 
+export interface PathOptions {
+  /**
+   * Give up on routes longer than this many turns. Bounds the cost of searching for
+   * an unreachable goal, which otherwise explores everything the unit could reach.
+   */
+  readonly maxTurns?: number;
+}
+
 /**
  * Cheapest path (fewest turns, then most MP left) from the unit to `goal`, possibly
  * spanning several turns. Aircraft paths are capped by remaining fuel.
- * Returns null if unreachable with what `k` knows.
+ * Returns null if unreachable with what `k` knows (or beyond `maxTurns`).
  */
-export function findPath(k: MapKnowledge, unit: Unit, goal: Coord): PlannedPath | null {
+export function findPath(k: MapKnowledge, unit: Unit, goal: Coord, opts: PathOptions = {}): PlannedPath | null {
   const { grid } = k;
   if (!grid.inBounds(goal)) return null;
   const M = unit.maxMoves;
@@ -98,6 +106,7 @@ export function findPath(k: MapKnowledge, unit: Unit, goal: Coord): PlannedPath 
     if (n.idx === goalIdx) return toPath(k, n);
     if (gOf(n, M) > (best.get(n.idx) ?? Infinity)) continue;
     for (const s of successors(k, unit, n)) {
+      if (opts.maxTurns !== undefined && s.turn >= opts.maxTurns) continue;
       const g = gOf(s, M);
       if (g >= (best.get(s.idx) ?? Infinity)) continue;
       best.set(s.idx, g);

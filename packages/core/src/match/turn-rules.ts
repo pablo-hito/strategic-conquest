@@ -22,6 +22,8 @@ export type TurnEvent =
   | { type: 'out_of_supply'; audience: PlayerId; unit: UnitId; turns: number }
   /** Sent to both sides of a fight: the defender always learns it was hit and by what. */
   | { type: 'combat'; audience: PlayerId; result: CombatResult }
+  /** Sent to the captor and to the previous owner (an owner always learns it lost a city). */
+  | { type: 'city_captured'; audience: PlayerId; city: CityId; by: PlayerId; from: PlayerId | null }
   | { type: 'player_eliminated'; audience: 'all'; player: PlayerId }
   | { type: 'match_won'; audience: 'all'; player: PlayerId; reason: 'city_share' | 'last_standing' };
 
