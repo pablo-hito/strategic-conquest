@@ -31,6 +31,7 @@ export const INK = '#d7e2ea';
 export const INK_DIM = '#7d8d99';
 export const REACH = 'rgba(64, 214, 232, 0.16)';
 export const REACH_SPECIAL = 'rgba(244, 177, 61, 0.22)';
+export const TARGET = '#ff5a5a';
 export const PATH = '#40d6e8';
 export const PATH_LATER = 'rgba(64, 214, 232, 0.45)';
 

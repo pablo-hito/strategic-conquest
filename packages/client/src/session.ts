@@ -3,10 +3,14 @@ import {
   PlayerId,
   buildPlayerView,
   findPath,
+  forecastAttack,
+  planAttack,
   fogKnowledge,
   generateMap,
   reachableThisTurn,
   type CityId,
+  type CombatResult,
+  type Forecast,
   type CitySpecialization,
   type Coord,
   type IslandDensity,
@@ -72,7 +76,7 @@ export class GameSession {
   static create(options: NewGameOptions): GameSession {
     const players = Array.from({ length: options.players }, (_, i) => PlayerId(`p${i + 1}`));
     const map = generateMap({ size: options.size, density: options.density, seed: options.seed }, players);
-    const { match, report } = Match.start(map.world, players);
+    const { match, report } = Match.start(map.world, players, undefined, options.seed);
     const s = new GameSession(options, match);
     s.push('all', `Mapa "${options.seed}": ${map.report.cities} ciudades en ${map.report.islands} islas.`, 'info');
     s.pushEvents(report.events);
@@ -141,6 +145,40 @@ export class GameSession {
     const unit = this.ownUnit(id);
     if (!unit) return null;
     return findPath(fogKnowledge(this.world, this.match.fogs.get(this.viewer)!), unit, goal);
+  }
+
+  /** Tiles the unit can attack right now, from where it stands. */
+  attackTargets(id: UnitId): Set<TileIndex> {
+    const out = new Set<TileIndex>();
+    const unit = this.ownUnit(id);
+    if (!unit || unit.def.attack <= 0 || unit.attackedThisTurn || unit.movesLeft <= 0) return out;
+    const fog = this.match.fogs.get(this.viewer)!;
+    const reach = unit.def.attackRange?.max ?? 1;
+    const { grid } = this.world;
+    for (let dy = -reach; dy <= reach; dy++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        const c = { x: unit.position.x + dx, y: unit.position.y + dy };
+        if (!grid.inBounds(c)) continue;
+        if (planAttack(this.world, fog, this.viewer, id, c).ok) out.add(grid.index(c));
+      }
+    }
+    return out;
+  }
+
+  /** Expected outcome of attacking `target`, or null if the attack isn't possible. */
+  forecast(id: UnitId, target: Coord): Forecast | null {
+    const fog = this.match.fogs.get(this.viewer)!;
+    const p = planAttack(this.world, fog, this.viewer, id, target);
+    return p.ok ? forecastAttack(this.world, p.value) : null;
+  }
+
+  attack(id: UnitId, target: Coord): string | null {
+    const r = this.match.attack(this.viewer, id, target);
+    this.invalidate();
+    if (!r.ok) return r.error.message;
+    this.orders.delete(id);
+    this.pushEvents(r.value.events);
+    return null;
   }
 
   /** Next own unit that can still act this turn, cycling after `after`. */
@@ -246,6 +284,24 @@ export class GameSession {
     return `${UNIT_NAME[type]} ${id.replace(/^u/, '#')}`;
   }
 
+  private pushCombat(audience: PlayerId, r: CombatResult): void {
+    const att = UNIT_NAME[r.attackerType];
+    const def = r.defenderType ? UNIT_NAME[r.defenderType] : null;
+    const attacking = r.defenderOwner !== audience;
+    const flak = r.interceptionDamage ? ` El fuego antiaéreo le hizo −${r.interceptionDamage}.` : '';
+    if (attacking) {
+      let text = def
+        ? `${att} atacó ${def}: −${r.damageToDefender}${r.defenderDestroyed ? ' (destruido)' : ''}${r.damageToAttacker ? `, recibió −${r.damageToAttacker}` : ''}.`
+        : `${att} bombardeó la ciudad.`;
+      if (r.cityBombed && def) text += ' La ciudad quedó bombardeada.';
+      if (r.attackerDestroyed) text += ` Perdiste tu ${att}.`;
+      this.push(audience, text + flak, r.attackerDestroyed ? 'bad' : r.defenderDestroyed ? 'good' : 'info');
+    } else {
+      const text = `${att} enemigo atacó tu ${def}: −${r.damageToDefender}${r.defenderDestroyed ? ' (destruido)' : ''}${r.attackerDestroyed ? `. El atacante fue destruido` : ''}.`;
+      this.push(audience, text, r.defenderDestroyed ? 'bad' : 'warn');
+    }
+  }
+
   private reportMove(
     unit: Unit,
     out: MoveOutcome & { events: TurnEvent[] },
@@ -285,6 +341,9 @@ export class GameSession {
           break;
         case 'out_of_supply':
           this.push(e.audience, `Una unidad está sin suministro (${e.turns} turno${e.turns === 1 ? '' : 's'}).`, 'warn');
+          break;
+        case 'combat':
+          this.pushCombat(e.audience, e.result);
           break;
         case 'player_eliminated':
           this.push('all', `${playerName(this.playerIndex(e.player))} fue eliminado.`, 'bad');

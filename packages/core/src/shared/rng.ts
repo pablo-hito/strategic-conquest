@@ -17,6 +17,17 @@ export class Rng {
     for (let i = 0; i < 15; i++) this.next(); // warm up
   }
 
+  /** Internal state, so a match can be saved and resumed mid-sequence. */
+  state(): [number, number, number, number] {
+    return [this.a, this.b, this.c, this.d];
+  }
+
+  static fromState(state: readonly number[]): Rng {
+    const r = new Rng(0);
+    [r.a, r.b, r.c, r.d] = state as [number, number, number, number];
+    return r;
+  }
+
   /** Uniform float in [0, 1). */
   next(): number {
     const t = (((this.a + this.b) | 0) + this.d) | 0;

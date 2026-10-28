@@ -2,6 +2,7 @@ import type { Coord, TileIndex } from '../grid/coords.js';
 import { truthKnowledge } from '../movement/map-knowledge.js';
 import { isRefuelPoint } from '../movement/step-rules.js';
 import type { CityId, PlayerId, UnitId } from '../shared/ids.js';
+import type { CombatResult } from '../combat/combat-rules.js';
 import type { UnitTypeId } from '../units/unit-types.js';
 import type { WorldState } from '../world/world-state.js';
 
@@ -19,6 +20,8 @@ export type TurnEvent =
   | { type: 'aircraft_crashed'; audience: PlayerId; unit: UnitId; unitType: UnitTypeId; at: Coord }
   | { type: 'aircraft_landed'; audience: PlayerId; unit: UnitId; carrier: UnitId }
   | { type: 'out_of_supply'; audience: PlayerId; unit: UnitId; turns: number }
+  /** Sent to both sides of a fight: the defender always learns it was hit and by what. */
+  | { type: 'combat'; audience: PlayerId; result: CombatResult }
   | { type: 'player_eliminated'; audience: 'all'; player: PlayerId }
   | { type: 'match_won'; audience: 'all'; player: PlayerId; reason: 'city_share' | 'last_standing' };
 

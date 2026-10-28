@@ -163,6 +163,7 @@ button, select, input { font: inherit; color: inherit; }
   font-variant-numeric: tabular-nums;
 }
 .status b { color: var(--fg); font-weight: 500; }
+.status .fc b { color: var(--bad); }
 .toast {
   position: absolute;
   left: 50%;

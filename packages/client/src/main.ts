@@ -43,6 +43,7 @@ class App {
   private sel: Selection = null;
   private hover: Coord | undefined;
   private reach: Map<TileIndex, ReachableTile> | undefined;
+  private targets: Set<TileIndex> | undefined;
   private path: PlannedPath | null = null;
   private pathKey = '';
   private cameras = new Map<PlayerId, Camera>();
@@ -70,7 +71,7 @@ class App {
     this.stage.append(this.canvas, this.status, this.toastEl, this.zoomButtons());
     this.mapPanel.append(el('h2', {}, 'Plano estratégico'), this.minimap);
     this.keysPanel.innerHTML = `<h2>Controles</h2><dl class="keys">
-      <dt>Clic</dt><dd>Seleccionar · mover a destino</dd>
+      <dt>Clic</dt><dd>Seleccionar · mover · atacar (objetivo en rojo)</dd>
       <dt>Arrastrar</dt><dd>Desplazar mapa · rueda: zoom</dd>
       <dt>N</dt><dd>Siguiente unidad disponible</dd>
       <dt>Espacio</dt><dd>Dejar la unidad quieta este turno</dd>
@@ -165,6 +166,7 @@ class App {
   private recomputeReach(): void {
     const u = this.selectedUnit();
     this.reach = u ? this.session.reachable(u.id) : undefined;
+    this.targets = u ? this.session.attackTargets(u.id) : undefined;
   }
 
   private select(sel: Selection, center = false): void {
@@ -198,6 +200,12 @@ class App {
     const s = this.session;
     if (!s.world.grid.inBounds(t) || s.match.status !== 'playing') return;
     const unit = this.selectedUnit();
+    if (unit && this.targets?.has(s.world.grid.index(t))) {
+      const msg = s.attack(unit.id, t);
+      if (msg) this.toast(msg);
+      this.afterAction(unit.id);
+      return;
+    }
     if (unit && !sameCoord(unit.position, t)) {
       const plan = s.plan(unit.id, t);
       if (plan && plan.steps.length > 0) {
@@ -217,7 +225,9 @@ class App {
       return this.select({ kind: 'unit', id: own[(cur + 1) % own.length]!.id });
     }
     if (ownCity) return this.select({ kind: 'city', id: ownCity.id });
-    if (unit && this.hasForeignUnit(t)) this.toast('El combate llega en la Fase 3: por ahora no se puede atacar.');
+    if (unit && this.hasForeignUnit(t)) {
+      this.toast(unit.attackedThisTurn ? 'Esta unidad ya atacó este turno.' : unit.def.attack <= 0 ? 'Esta unidad no tiene armas.' : 'Fuera de alcance o no puede atacar ese objetivo: acercate primero.');
+    }
     this.select({ kind: 'tile', at: t });
   }
 
@@ -300,6 +310,7 @@ class App {
           selectedUnit: u ? { id: u.id, at: u.position } : undefined,
           selectedTile: this.sel && this.sel.kind !== 'unit' ? this.selectionCoord() : undefined,
           reach: this.reach,
+          targets: this.targets,
           path: this.path?.steps,
           hover: this.hover,
         },
@@ -347,7 +358,12 @@ class App {
     const terrain = code === UNKNOWN_TERRAIN ? 'Sin explorar' : TERRAIN_NAME[TERRAINS[code]!];
     const vis = ['', ' · en niebla', ' · a la vista'][view.visibility[i]!];
     const parts = [`<span>X<b>${String(h.x).padStart(3, '0')}</b> Y<b>${String(h.y).padStart(3, '0')}</b></span>`, `<span><b>${terrain}</b>${vis}</span>`];
-    if (this.path) {
+    const sel = this.selectedUnit();
+    const fc = sel && this.targets?.has(i) ? this.session.forecast(sel.id, h) : null;
+    if (fc) {
+      const fmt = (n: number) => n.toFixed(1).replace(/\.0$/, '');
+      parts.push(`<span class="fc">Ataque: daño estimado <b>−${fmt(fc.damageToDefender)}</b>${fc.defenderCanCounter ? ` · contraataque <b>−${fmt(fc.damageToAttacker)}</b>` : ' · sin contraataque'}${fc.interceptionDamage ? ` · antiaéreo <b>−${fmt(fc.interceptionDamage)}</b>` : ''}</span>`);
+    } else if (this.path) {
       parts.push(`<span>Ruta <b>${this.path.steps.length}</b> casillas · llega en <b>${this.path.turns}</b> turno${this.path.turns === 1 ? '' : 's'}</span>`);
     } else if (this.selectedUnit() && !sameCoord(this.selectedUnit()!.position, h)) {
       parts.push('<span>Sin ruta conocida</span>');
@@ -400,6 +416,7 @@ class App {
         ${u.fuel !== null ? `<dt>Combustible</dt><dd class="meter"><i style="--v:${(u.fuel / def.fuel!) * 100}%;--meter:var(--amber)"></i>${u.fuel}/${def.fuel}</dd>` : ''}
         <dt>Ataque · Def.</dt><dd>${def.attack} · ${def.defense}${u.entrenchment ? ` (+${u.entrenchment * 20}% atrinch.)` : ''}</dd>
         <dt>Alcance · Visión</dt><dd>${range} · ${def.vision}</dd>
+        ${def.attack > 0 ? `<dt>Ataque</dt><dd>${u.attackedThisTurn ? 'Ya atacó este turno' : this.targets?.size ? `${this.targets.size} objetivo${this.targets.size === 1 ? '' : 's'} a tiro` : 'Sin objetivos a tiro'}</dd>` : ''}
         ${supply ? `<dt>Suministro</dt><dd>${supply}</dd>` : ''}
         ${def.cargo ? `<dt>Carga</dt><dd>${u.cargo.length}/${def.cargo.slots}</dd>` : ''}
       </dl>

@@ -23,3 +23,4 @@ export * from './match/match.js';
 export * from './shared/rng.js';
 export * from './mapgen/simplex.js';
 export * from './mapgen/map-generator.js';
+export * from './combat/combat-rules.js';

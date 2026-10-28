@@ -1,8 +1,10 @@
 import type { CitySpecialization } from '../cities/specialization.js';
+import { planAttack, resolveAttack, type AttackError, type CombatResult } from '../combat/combat-rules.js';
 import type { Coord } from '../grid/coords.js';
 import { moveUnit, mergeFogUpdates, type MoveError, type MoveOutcome } from '../movement/movement-service.js';
 import type { CityId, PlayerId, UnitId } from '../shared/ids.js';
 import { err, invariant, ok, type Result } from '../shared/result.js';
+import { Rng } from '../shared/rng.js';
 import type { UnitTypeId } from '../units/unit-types.js';
 import { PlayerFogMap, type FogMapSnapshot, type FogUpdate } from '../visibility/fog-of-war.js';
 import { WorldState, type WorldSnapshot } from '../world/world-state.js';
@@ -27,6 +29,8 @@ export interface MatchSnapshot {
   readonly winner: PlayerId | null;
   readonly rules: VictoryRules;
   readonly fogs: FogMapSnapshot[];
+  /** Combat dice state, so a resumed match rolls exactly as the original would. */
+  readonly rng: number[];
 }
 
 /** Everything a turn change produced, for the server to fan out. */
@@ -56,6 +60,7 @@ export class Match {
     readonly world: WorldState,
     readonly order: readonly PlayerId[],
     readonly rules: VictoryRules,
+    private rng: Rng,
   ) {
     invariant(order.length >= 2 && order.length <= 6, 'a match needs 2 to 6 players');
     invariant(new Set(order).size === order.length, 'duplicate player in turn order');
@@ -63,8 +68,13 @@ export class Match {
   }
 
   /** Start a match on a prepared world (map generated, starting cities assigned). */
-  static start(world: WorldState, order: readonly PlayerId[], rules = DEFAULT_VICTORY_RULES): { match: Match; report: TurnReport } {
-    const m = new Match(world, order, rules);
+  static start(
+    world: WorldState,
+    order: readonly PlayerId[],
+    rules = DEFAULT_VICTORY_RULES,
+    seed: string | number = 'match',
+  ): { match: Match; report: TurnReport } {
+    const m = new Match(world, order, rules, new Rng(`combat:${seed}`));
     for (const p of order) m.fogs.set(p, new PlayerFogMap(p, world.grid.width, world.grid.height));
     const events = beginPlayerTurn(world, order[0]!);
     return { match: m, report: m.report(events, m.refreshAllFog()) };
@@ -94,6 +104,32 @@ export class Match {
     // Eliminations remove units and new turns spawn them: fold that into the deltas.
     const fogUpdates = events.length > 0 ? mergeMaps(new Map(r.value.fogUpdates), this.refreshAllFog()) : r.value.fogUpdates;
     return ok({ ...r.value, fogUpdates, events });
+  }
+
+  /**
+   * Attack the tile `target` with a unit. The defender is picked by the rules (best
+   * defender against this attacker); dice come from the match's seeded RNG.
+   */
+  attack(
+    player: PlayerId,
+    attackerId: UnitId,
+    target: Coord,
+  ): Result<{ result: CombatResult; events: TurnEvent[]; fogUpdates: ReadonlyMap<PlayerId, FogUpdate> }, CommandError | AttackError> {
+    const turn = this.checkTurn(player);
+    if (!turn.ok) return turn;
+    const plan = planAttack(this.world, this.fogs.get(player)!, player, attackerId, target);
+    if (!plan.ok) return plan;
+    const result = resolveAttack(this.world, plan.value, this.rng);
+    const events: TurnEvent[] = [{ type: 'combat', audience: player, result }];
+    if (result.defenderOwner && result.defenderOwner !== player) {
+      events.push({ type: 'combat', audience: result.defenderOwner, result });
+    }
+    events.push(...this.checkVictory());
+    if (this._status === 'playing' && !this.alive.includes(player)) {
+      this.advance();
+      events.push(...beginPlayerTurn(this.world, this.activePlayer!));
+    }
+    return ok({ result, events, fogUpdates: this.refreshAllFog() });
   }
 
   setProduction(player: PlayerId, cityId: CityId, unit: UnitTypeId): Result<void, string> {
@@ -149,11 +185,12 @@ export class Match {
       winner: this._winner,
       rules: this.rules,
       fogs: [...this.fogs.values()].map((f) => f.toSnapshot()),
+      rng: this.rng.state(),
     };
   }
 
   static fromSnapshot(s: MatchSnapshot): Match {
-    const m = new Match(WorldState.fromSnapshot(s.world), s.order, s.rules);
+    const m = new Match(WorldState.fromSnapshot(s.world), s.order, s.rules, Rng.fromState(s.rng));
     m.alive = [...s.alive];
     m.activeIndex = s.activeIndex;
     m._status = s.status;

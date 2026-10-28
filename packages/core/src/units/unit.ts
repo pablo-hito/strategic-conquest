@@ -188,6 +188,11 @@ export class Unit {
     if (this.def.indirectFire) this.s.movesLeft = 0;
   }
 
+  /** An attack costs one movement point (indirect fire already spent them all). */
+  spendForAttack(): void {
+    this.s.movesLeft = Math.max(0, this.s.movesLeft - 1);
+  }
+
   /** Returns true if the unit was destroyed. */
   takeDamage(amount: number): boolean {
     invariant(amount >= 0, 'damage must be non-negative');

@@ -25,6 +25,7 @@ import {
   PATH_LATER,
   REACH,
   REACH_SPECIAL,
+  TARGET,
   TERRAIN_COLOR,
   TERRAIN_DETAIL,
   UNEXPLORED,
@@ -34,6 +35,7 @@ export interface Overlay {
   readonly selectedUnit?: { id: string; at: Coord } | undefined;
   readonly selectedTile?: Coord | undefined;
   readonly reach?: ReadonlyMap<TileIndex, ReachableTile> | undefined;
+  readonly targets?: ReadonlySet<TileIndex> | undefined;
   readonly path?: readonly PathStep[] | undefined;
   readonly hover?: Coord | undefined;
 }
@@ -240,6 +242,22 @@ export class MapRenderer {
         ctx.setLineDash([z / 5, z / 8]);
         ctx.strokeRect(sx(x) + 1, sy(y) + 1, z - 2, z - 2);
         ctx.setLineDash([]);
+      }
+    }
+
+    // Attack targets: red brackets on every enemy tile in range.
+    if (overlay.targets) {
+      ctx.strokeStyle = TARGET;
+      ctx.lineWidth = Math.max(1.5, z / 14);
+      for (const i of overlay.targets) {
+        const x = i % view.width, y = Math.floor(i / view.width);
+        if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+        const px = sx(x), py = sy(y), l = z * 0.28;
+        ctx.beginPath();
+        for (const [cx, cy, dx, dy] of [[px, py, 1, 1], [px + z, py, -1, 1], [px, py + z, 1, -1], [px + z, py + z, -1, -1]] as const) {
+          ctx.moveTo(cx, cy + dy * l); ctx.lineTo(cx, cy); ctx.lineTo(cx + dx * l, cy);
+        }
+        ctx.stroke();
       }
     }
 

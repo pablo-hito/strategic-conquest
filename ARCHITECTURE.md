@@ -39,6 +39,7 @@ src/
   movement/    reglas de paso, búsqueda de caminos, alcance, ejecución de movimientos
   match/       Match (orquestador de turnos y comandos), reglas de turno, victoria
   mapgen/      generador procedural de archipiélagos (simplex + RNG con semilla)
+  combat/      matriz de efectividad, pronóstico y resolución de ataques
 ```
 
 **Terreno como datos.** Cada terreno define dominio, elevación, *canopy*, bonus de visión, ocultamiento aéreo, bonus defensivo y costo de movimiento **por clase de movimiento** (`foot`, `wheeled`, `tracked`, `naval`, `naval_heavy`, `air`). Agregar una unidad no requiere tocar la tabla de terreno.
@@ -133,6 +134,32 @@ Sólo el primer paso puede rechazar el comando entero; a partir de ahí la unida
 
 Medido sobre 15 semillas por combinación (3 tamaños × 3 densidades × 2/4/6 jugadores): ninguna falla, equilibrio mínimo 0.67–0.94 y mediana 0.81–0.99; un mapa Huge para 6 jugadores tarda <100 ms.
 
+## 3g. Combate (Fase 3)
+
+**Comando `Match.attack(jugador, unidad, casilla)`.** Se ataca desde donde está la unidad (primero se mueve, después se ataca). Cuesta 1 PM y una unidad ataca una sola vez por turno. La artillería no puede moverse y disparar en el mismo turno, y disparar le consume todo el movimiento.
+
+**Validación (`planAttack`):** la casilla tiene que estar dentro del alcance (cuerpo a cuerpo = 1; artillería 2–3; acorazado 1–3; crucero 1–4) y contener enemigos **que el bando atacante tenga detectados**: no se puede disparar a lo que no se ve (un submarino en silencio sólo es blanco si un sonar o una unidad adyacente lo detecta). Entre los enemigos de la casilla defiende el que mejor aguanta contra *ese* atacante.
+
+**Matriz de efectividad (`EFFECTIVENESS`).** Multiplica el ataque según la clase del blanco (blando, blindado, aéreo, naval liviano, naval pesado, submarino); 0 = no puede atacarlo. Así la infantería no le hace nada a un avión, los acorazados no pueden con submarinos y el antiaéreo vale doble contra aviones.
+
+**Fórmula.**
+- Fuerza de ataque = ataque × efectividad × salud (50% + 50% × vida restante), −25% si ataca desde un transporte (asalto anfibio).
+- Fuerza de defensa = defensa × (1 + terreno + atrincheramiento + 25% en ciudad propia − 25% sin suministro) × salud.
+- Daño = 4 × (ataque / defensa)^0,6, con ±15% de azar. El exponente hace que el doble de fuerza sea 1,5× el daño: el superior gana claro sin destruir todo de un golpe.
+
+**Secuencia.**
+1. Fuego antiaéreo: si atacás con un avión dentro del radio de un antiaéreo o crucero enemigo, éste dispara primero; puede derribarlo antes de que llegue.
+2. El ataque.
+3. Contraataque del defensor, si sobrevive, si tiene armas contra el atacante y si el atacante está dentro de su alcance. La artillería atacada a distancia no responde, y los aviones sólo contraatacan a otros aviones.
+
+**Especiales.** El bombardero estratégico puede atacar una ciudad enemiga aunque esté vacía: le reduce la producción a la mitad y le inutiliza el puerto 2 turnos. Un submarino que dispara sale del modo silencioso. Un transporte o portaaviones hundido se lleva su carga.
+
+**Azar reproducible.** Los dados salen de un `Rng` con semilla propio de la partida, cuyo estado se guarda con la partida: el mismo historial de comandos da siempre los mismos resultados.
+
+**Pronóstico (`forecastAttack`).** Calcula el daño esperado sin tirar dados; el visor lo muestra al pasar el cursor sobre un objetivo. Ambos bandos reciben un evento `combat`.
+
+Valores de referencia (unidades sanas, en llanura): infantería vs infantería −4 / contraataque −3,5; tanque vs infantería −8,6 / −1,2; tanque vs tanque −5,7 / −4,8; submarino vs portaaviones −9,7 de 16; antiaéreo vs CAS −6,1 de 8.
+
 ## 3f. Visor local (`packages/client`)
 
 Primer cliente: Vite + TypeScript + Canvas 2D, sin framework. Juega partidas locales por turnos (hot-seat) usando `Match` exactamente como lo hará el servidor, y **sólo dibuja el `PlayerView` del jugador activo**: entre turnos una pantalla opaca oculta el mapa hasta que el siguiente jugador toma el control.
@@ -142,7 +169,7 @@ Primer cliente: Vite + TypeScript + Canvas 2D, sin framework. Juega partidas loc
 - `main.ts`: interfaz (panel de unidad y de ciudad con producción y especialización, registro táctico, nueva partida con semilla), mouse, teclado y gestos táctiles. Autoguardado en `localStorage`.
 - `scripts/build-standalone.mjs`: empaqueta todo en un único HTML.
 
-El atacar todavía no existe (Fase 3): hacer clic sobre un enemigo lo avisa.
+Con una unidad seleccionada, los enemigos atacables se marcan en rojo; al pasar el cursor se ve el pronóstico de daño y con un clic se ataca.
 
 ## 4. Valores iniciales de balance (tunables)
 

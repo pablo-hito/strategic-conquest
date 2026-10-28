@@ -10,6 +10,12 @@ function playTurn(s: GameSession): void {
   for (let guard = 0; guard < 50; guard++) {
     const u = s.nextIdleUnit();
     if (!u) break;
+    const [target] = s.attackTargets(u.id);
+    if (target !== undefined) {
+      s.attack(u.id, s.world.grid.coordOf(target));
+      if (s.world.unit(u.id)) s.skip(u.id);
+      continue;
+    }
     const targets = [...s.world.allCities()]
       .filter((c) => c.owner !== me)
       .sort((a, b) => s.world.grid.distance(a.position, u.position) - s.world.grid.distance(b.position, u.position));
@@ -58,6 +64,31 @@ describe('GameSession (hot-seat)', () => {
     s.endTurn(); s.beginTurn(); // P2
     s.endTurn(); s.beginTurn(); // back to P1: order resumes
     expect(inf.position).not.toEqual(before);
+  });
+
+  it('attacks known enemies in range and reports to both players', () => {
+    const s = GameSession.create(opts);
+    const [p1, p2] = s.players as [typeof s.viewer, typeof s.viewer];
+    const inf = s.world.unitsOf(p1)[0]!;
+    const spot = s.world.grid
+      .neighbors(inf.position)
+      .find((c) => s.world.grid.isLand(c) && !s.world.cityAt(c) && s.world.unitsAt(c).length === 0)!;
+    const enemy = s.world.spawnUnit('infantry', p2, spot);
+    s.match.fogs.get(p1)!.update(s.world);
+    s.invalidate();
+
+    expect([...s.attackTargets(inf.id)]).toEqual([s.world.grid.index(spot)]);
+    const fc = s.forecast(inf.id, spot)!;
+    expect(fc.damageToDefender).toBeGreaterThan(0);
+    expect(s.attack(inf.id, spot)).toBeNull();
+    expect(s.attackTargets(inf.id).size).toBe(0); // one attack per turn
+    expect(s.visibleLog().at(-1)?.text).toMatch(/^Infantería atacó Infantería: −\d+/);
+    expect(enemy.hp).toBeLessThan(10);
+
+    s.endTurn();
+    s.beginTurn();
+    expect(s.viewer).toBe(p2);
+    expect(s.visibleLog().some((e) => /enemigo atacó tu Infantería/.test(e.text))).toBe(true);
   });
 
   it('round-trips through a save', () => {
