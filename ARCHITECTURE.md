@@ -36,6 +36,7 @@ src/
   cities/      CitySpecialization, City (entidad, producción)
   world/       WorldState (raíz: entidades + índices tile→units, tile→city)
   visibility/  line-of-sight, vision, fog-of-war (PlayerFogMap), player-view
+  movement/    reglas de paso, búsqueda de caminos, alcance, ejecución de movimientos
 ```
 
 **Terreno como datos.** Cada terreno define dominio, elevación, *canopy*, bonus de visión, ocultamiento aéreo, bonus defensivo y costo de movimiento **por clase de movimiento** (`foot`, `wheeled`, `tracked`, `naval`, `naval_heavy`, `air`). Agregar una unidad no requiere tocar la tabla de terreno.
@@ -64,6 +65,23 @@ src/
 
 **Anti-cheat.** `buildPlayerView()` es la única representación que sale del servidor: terreno inexplorado = `255`, enemigos sin carga/combustible/órdenes, ciudades ajenas sólo con el dueño recordado.
 
+## 3b. Movimiento
+
+**Qué sabe el que planifica (`MapKnowledge`).** Las reglas de movimiento consultan el mapa a través de una interfaz con dos implementaciones:
+- `truthKnowledge(world)`: la verdad. La usa el servidor al ejecutar y validar.
+- `fogKnowledge(world, fog)`: sólo lo que conoce el jugador. La usan los caminos, el overlay de alcance y los bots. Las casillas sin explorar se suponen transitables (costo 1) y los enemigos no detectados no existen, así planificar no filtra información.
+
+**Reglas de un paso (`checkStep`).** Adyacencia, límites, combustible, costo de terreno por clase de movimiento, enemigos en la casilla (eso es un ataque, no un movimiento) y ciudades ajenas (la captura será un comando aparte). Los barcos atracan en ciudades costeras propias. La tropa terrestre que pisa agua con un transporte propio con lugar *embarca* (y termina su movimiento); la que baja del transporte a tierra *desembarca*. En ciudades propias se mueve a costo 1 (rutas). Se permite apilar unidades propias sin límite por ahora.
+
+**Caminos multi-turno (`findPath`, A\*) y alcance (`reachableThisTurn`, Dijkstra).** El costo no es una suma simple por la regla de paso mínimo, así que el estado es *(turno, MP gastados en el turno)* ordenado por `g = turno·MP + gastados`. Un `g` menor siempre domina, por eso la búsqueda sigue siendo óptima: minimiza turnos y, a igualdad, deja más MP. Cada paso indica en qué turno se da (para dibujar marcadores de turno). Los aviones quedan limitados por el combustible.
+
+**Ejecución (`moveUnit`).** El cliente manda un camino; el servidor revalida cada paso contra la verdad, recalcula la niebla de **todos** los jugadores después de cada paso y se detiene:
+- `CONTACT`: apareció un enemigo nuevo (el jugador puede reaccionar con los MP que le quedan);
+- `BLOCKED`: algo oculto en la niebla cortó el camino;
+- `BOARDED`, `NO_MOVES_LEFT`, `CRASHED` (avión sin combustible fuera de una ciudad o portaaviones propio), o `COMPLETED`.
+
+Sólo el primer paso puede rechazar el comando entero; a partir de ahí la unidad se detiene donde está. Los aviones repostan al pasar por una ciudad propia o un portaaviones propio con lugar. Devuelve los deltas de niebla de cada jugador ya combinados (`mergeFogUpdates`), listos para enviar.
+
 ## 4. Valores iniciales de balance (tunables)
 
 | Unidad | Clase mov. | MP | Visión | HP | Atk/Def | Turnos | Notas |
@@ -90,9 +108,9 @@ src/
 Especializaciones: *Industrial Hub* (−25% turnos para blindados/artillería/AA/mecanizada), *Naval Yard* (requiere costa; habilita buques capitales), *Air Base* (−20% cazas/CAS, 10 hangares, habilita bombardero/AWACS). Bombardeo estratégico: progreso a la mitad y puerto cerrado 2 turnos (los barcos en producción se detienen sin perder progreso). Capturar una ciudad reinicia la producción (infantería) y conserva la especialización.
 
 ## 5. Próximos pasos (Fase 1, continuación)
-1. `MovementService`: validación de pasos (adyacencia, terreno, apilamiento, ZOC), pathfinding A* con costos por clase, alcance (Dijkstra) para el overlay de movimiento, interrupción al contacto.
+1. ~~Movimiento: validación de pasos, caminos A\*, alcance, interrupción al contacto~~ (hecho).
 2. Captura de ciudades y embarque/desembarco anfibio sobre `WorldState`.
 3. Ciclo de turno: `startTurn` de unidades, producción, combustible (aterrizaje o derribo), suministro.
 4. Generador de mapas (Simplex + reparto equitativo de ciudades) con semilla reproducible.
 
-Pendientes de diseño anotados: los IDs secuenciales filtran cuántas unidades produjo un rival; antes de la Fase 2 conviene usar IDs opacos por observador en `PlayerView`.
+Pendientes de diseño anotados: límites de apilamiento y zonas de control (no están en la especificación, se pueden sumar en `checkStep`); aterrizar en portaaviones como carga (hoy sólo reposta). Además, los IDs secuenciales filtran cuántas unidades produjo un rival; antes de la Fase 2 conviene usar IDs opacos por observador en `PlayerView`.

@@ -13,3 +13,7 @@ export * from './visibility/line-of-sight.js';
 export * from './visibility/vision.js';
 export * from './visibility/fog-of-war.js';
 export * from './visibility/player-view.js';
+export * from './movement/map-knowledge.js';
+export * from './movement/step-rules.js';
+export * from './movement/pathfinding.js';
+export * from './movement/movement-service.js';
