@@ -142,4 +142,4 @@ Especializaciones: *Industrial Hub* (−25% turnos para blindados/artillería/AA
 3. ~~Ciclo de turno: producción, reparación, combustible, aterrizaje en portaaviones, suministro, rotación y victoria~~ (hecho).
 4. Generador de mapas (Simplex + reparto equitativo de ciudades) con semilla reproducible.
 
-Pendientes de diseño anotados: límites de apilamiento y zonas de control (no están en la especificación, se pueden sumar en `checkStep`);  Además, los IDs secuenciales filtran cuántas unidades produjo un rival; antes de la Fase 2 conviene usar IDs opacos por observador en `PlayerView`.
+Pendientes de diseño anotados: límites de apilamiento y zonas de control (no están en la especificación, se pueden sumar en `checkStep`). Además, los IDs secuenciales filtran cuántas unidades produjo un rival; antes de la Fase 2 conviene usar IDs opacos por observador en `PlayerView`.
