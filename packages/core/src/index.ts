@@ -18,3 +18,5 @@ export * from './movement/step-rules.js';
 export * from './movement/pathfinding.js';
 export * from './movement/movement-service.js';
 export * from './match/victory.js';
+export * from './match/turn-rules.js';
+export * from './match/match.js';

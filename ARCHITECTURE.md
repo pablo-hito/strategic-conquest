@@ -37,6 +37,7 @@ src/
   world/       WorldState (raíz: entidades + índices tile→units, tile→city)
   visibility/  line-of-sight, vision, fog-of-war (PlayerFogMap), player-view
   movement/    reglas de paso, búsqueda de caminos, alcance, ejecución de movimientos
+  match/       Match (orquestador de turnos y comandos), reglas de turno, victoria
 ```
 
 **Terreno como datos.** Cada terreno define dominio, elevación, *canopy*, bonus de visión, ocultamiento aéreo, bonus defensivo y costo de movimiento **por clase de movimiento** (`foot`, `wheeled`, `tracked`, `naval`, `naval_heavy`, `air`). Agregar una unidad no requiere tocar la tabla de terreno.
@@ -91,6 +92,25 @@ Sólo el primer paso puede rechazar el comando entero; a partir de ahí la unida
 - queda eliminado quien no tenga ciudades **ni** unidades capaces de capturar (incluidas las embarcadas), porque ya no puede producir ni recuperarse;
 - si queda un solo jugador, gana por `last_standing`. Si todos caen a la vez no hay ganador (empate).
 
+## 3d. Ciclo de turno (modo clásico secuencial)
+
+**`Match` es la puerta de entrada de los comandos** (`move`, `setProduction`, `setSpecialization`, `endTurn`): valida que sea el turno de quien lo pide, delega en las reglas, mantiene al día la niebla de todos y reevalúa la victoria. Timers, sockets y persistencia quedan afuera (servidor, Fase 2). El modo simultáneo (WEGO) será otro orquestador sobre las mismas reglas.
+
+**Inicio del turno de un jugador (`beginPlayerTurn`):**
+1. Sus ciudades producen; la unidad nueva aparece en la ciudad y puede moverse ese mismo turno.
+2. Sus unidades recuperan MP y, si no se movieron, suben un nivel de atrincheramiento.
+3. Reparación y combustible: en ciudad propia +2 HP y tanque lleno; aviones dentro de un portaaviones +1 HP y tanque lleno.
+
+**Fin del turno (`endPlayerTurn`):**
+1. Los aviones sobre un portaaviones propio con lugar aterrizan en él (pasan a ser carga) y repostan.
+2. Los aviones que quedan en el aire gastan los MP que no usaron ("loiter"): así un caza con 20 de combustible y 10 MP aguanta dos turnos fuera de base. Con 0 combustible y lejos de una base, se estrellan.
+3. Suministro: una unidad terrestre está abastecida si hay un camino por tierra hasta una ciudad propia sin cruzar enemigos ni ciudades ajenas, o si va embarcada. Si no, suma un turno; después de 3 pierde 25% de defensa. Se avisa cada turno que está cortada.
+4. Se evalúa la victoria; el siguiente jugador vivo empieza su turno. Al dar la vuelta, la ronda avanza.
+
+**Eliminación en el medio.** Una captura o un derribo pueden terminar la partida (o eliminar a alguien) en plena jugada. Las fuerzas que le queden al eliminado se rinden (se retiran del mapa) y la rotación lo saltea.
+
+**Eventos con audiencia.** Cada `TurnEvent` indica a quién se le puede contar (`audience`: un jugador o `all`): la producción, los derribos y los avisos de suministro son privados; eliminaciones y victoria son públicas.
+
 ## 4. Valores iniciales de balance (tunables)
 
 | Unidad | Clase mov. | MP | Visión | HP | Atk/Def | Turnos | Notas |
@@ -119,7 +139,7 @@ Especializaciones: *Industrial Hub* (−25% turnos para blindados/artillería/AA
 ## 5. Próximos pasos (Fase 1, continuación)
 1. ~~Movimiento: validación de pasos, caminos A\*, alcance, interrupción al contacto~~ (hecho).
 2. ~~Captura de ciudades, asalto anfibio y condiciones de victoria~~ (hecho).
-3. Ciclo de turno: `startTurn` de unidades, producción, combustible (aterrizaje o derribo), suministro.
+3. ~~Ciclo de turno: producción, reparación, combustible, aterrizaje en portaaviones, suministro, rotación y victoria~~ (hecho).
 4. Generador de mapas (Simplex + reparto equitativo de ciudades) con semilla reproducible.
 
-Pendientes de diseño anotados: límites de apilamiento y zonas de control (no están en la especificación, se pueden sumar en `checkStep`); aterrizar en portaaviones como carga (hoy sólo reposta). Además, los IDs secuenciales filtran cuántas unidades produjo un rival; antes de la Fase 2 conviene usar IDs opacos por observador en `PlayerView`.
+Pendientes de diseño anotados: límites de apilamiento y zonas de control (no están en la especificación, se pueden sumar en `checkStep`);  Además, los IDs secuenciales filtran cuántas unidades produjo un rival; antes de la Fase 2 conviene usar IDs opacos por observador en `PlayerView`.

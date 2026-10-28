@@ -168,6 +168,15 @@ export class Unit {
     return this.s.fuel !== null && this.s.fuel <= 0;
   }
 
+  /**
+   * Aircraft that end the turn in the air spend their unused movement loitering, so a
+   * plane can't hover forever by not moving: its range is fuel / moves turns aloft.
+   */
+  burnLoiterFuel(): void {
+    if (this.s.fuel !== null) this.s.fuel = Math.max(0, this.s.fuel - this.s.movesLeft);
+    this.s.movesLeft = 0;
+  }
+
   refuel(): void {
     if (this.def.fuel !== undefined) this.s.fuel = this.def.fuel;
   }
