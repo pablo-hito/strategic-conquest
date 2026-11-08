@@ -2,11 +2,14 @@
   "name": "strategic-conquest",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "test": "npm test --workspaces",
-    "typecheck": "npm run typecheck --workspaces"
+    "build": "npm run build -w @sc/client && npm run build -w @sc/server",
+    "start": "node packages/server/dist/server.mjs",
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

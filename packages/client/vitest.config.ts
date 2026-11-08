@@ -6,6 +6,8 @@ export default defineConfig({
     alias: {
       '@sc/core': fileURLToPath(new URL('../core/src/index.ts', import.meta.url)),
       '@sc/ai': fileURLToPath(new URL('../ai/src/index.ts', import.meta.url)),
+      '@sc/protocol/client': fileURLToPath(new URL('../protocol/src/client.ts', import.meta.url)),
+      '@sc/protocol': fileURLToPath(new URL('../protocol/src/index.ts', import.meta.url)),
     },
   },
 });

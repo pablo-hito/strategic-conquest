@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "paths": { "@sc/core": ["../core/src/index.ts"], "@sc/ai": ["../ai/src/index.ts"] }
+    "paths": { "@sc/core": ["../core/src/index.ts"], "@sc/ai": ["../ai/src/index.ts"], "@sc/protocol": ["../protocol/src/index.ts"], "@sc/protocol/client": ["../protocol/src/client.ts"] }
   },
   "include": ["src"]
 }

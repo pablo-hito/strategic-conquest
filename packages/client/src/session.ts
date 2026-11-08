@@ -41,7 +41,7 @@ export interface AssaultPlan {
 }
 
 /** 'bots': player 1 is you, everyone else is the computer. 'hotseat': all humans. */
-export type GameMode = 'bots' | 'hotseat';
+export type GameMode = 'bots' | 'hotseat' | 'online';
 
 /** How much faster the computer's cities produce (it never sees more than you). */
 export type Difficulty = 'normal' | 'hard' | 'brutal';
@@ -90,13 +90,14 @@ export class GameSession {
   /** Units the player chose to leave alone this turn (skipped by "next unit"). */
   readonly skipped = new Set<UnitId>();
   awaitingHandoff = false;
-  private cachedView: PlayerView | null = null;
+  protected cachedView: PlayerView | null = null;
   /** Players the computer controls. */
   readonly bots: ReadonlySet<PlayerId>;
 
-  private constructor(
+  protected constructor(
     readonly options: NewGameOptions,
-    readonly match: Match,
+    /** The authoritative match locally; online, a "shadow" rebuilt from the server's view. */
+    public match: Match,
   ) {
     this.bots = new Set(options.mode === 'bots' ? match.order.slice(1) : []);
   }
@@ -144,6 +145,16 @@ export class GameSession {
   get viewer(): PlayerId {
     if (this.bots.size > 0) return this.players.find((p) => !this.bots.has(p))!;
     return this.match.activePlayer ?? this.match.winner ?? this.players[0]!;
+  }
+
+  /** Cities on the whole map (online, the server says: the client doesn't see them all). */
+  totalCities(): number {
+    return [...this.world.allCities()].length;
+  }
+
+  /** Short label for a unit id: "#12" locally, the last characters of an opaque id online. */
+  unitTag(id: string): string {
+    return /^u\d+$/.test(id) ? id.replace('u', '#') : `#${id.slice(-3)}`;
   }
 
   playerIndex(p: PlayerId): number {
@@ -454,13 +465,13 @@ export class GameSession {
   private knownBefore = new Set<string>();
 
   /** Called when the human ends a turn against the computer: start collecting. */
-  private openRivalReport(): void {
+  protected openRivalReport(): void {
     this.reportFrom = this.log.length;
     this.knownBefore = new Set(this.view().foreignUnits.map((u) => u.id));
   }
 
   /** Called when the human's next turn starts: keep what concerns them, plus new contacts. */
-  private closeRivalReport(): void {
+  protected closeRivalReport(): void {
     const me = this.viewer;
     const items = this.log
       .slice(this.reportFrom)
@@ -511,12 +522,12 @@ export class GameSession {
     return this.log.filter((e) => e.audience === 'all' || e.audience === this.viewer);
   }
 
-  private push(audience: PlayerId | 'all', text: string, tone: Tone, at?: Coord): void {
+  protected push(audience: PlayerId | 'all', text: string, tone: Tone, at?: Coord): void {
     this.log.push({ round: this.match.round, audience, text, tone, ...(at ? { at: { ...at } } : {}) });
   }
 
   private unitLabel(type: UnitTypeId, id: UnitId): string {
-    return `${UNIT_NAME[type]} ${id.replace(/^u/, '#')}`;
+    return `${UNIT_NAME[type]} ${this.unitTag(id)}`;
   }
 
   private pushCombat(audience: PlayerId, r: CombatResult): void {
@@ -558,7 +569,7 @@ export class GameSession {
     this.pushEvents(out.events);
   }
 
-  private pushEvents(events: readonly TurnEvent[]): void {
+  protected pushEvents(events: readonly TurnEvent[]): void {
     for (const e of events) {
       switch (e.type) {
         case 'unit_produced': {

@@ -13,7 +13,7 @@ const result = await build({
   target: 'es2020',
   minify: true,
   write: false,
-  alias: { '@sc/core': here('../../core/src/index.ts'), '@sc/ai': here('../../ai/src/index.ts') },
+  alias: { '@sc/core': here('../../core/src/index.ts'), '@sc/ai': here('../../ai/src/index.ts'), '@sc/protocol/client': here('../../protocol/src/client.ts'), '@sc/protocol': here('../../protocol/src/index.ts') },
   legalComments: 'none',
 });
 const js = result.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
@@ -35,4 +35,17 @@ ${js}
 
 await mkdir(here('../dist'), { recursive: true });
 await writeFile(here('../dist/strategic-conquest.html'), html);
+// Full page for the game server (the artifact viewer adds its own document shell).
+const cut = html.indexOf('<script>');
+const page = `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+${html.slice(0, cut)}</head>
+<body>
+${html.slice(cut)}</body>
+</html>
+`;
+await writeFile(here('../dist/play.html'), page);
 console.log(`dist/strategic-conquest.html  ${(html.length / 1024).toFixed(1)} KB`);

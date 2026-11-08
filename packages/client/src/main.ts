@@ -22,6 +22,9 @@ import { drawUnitIcon } from './icons.js';
 import { SPECIALIZATION_NAME, TERRAIN_NAME, UNIT_CODE, UNIT_NAME } from './labels.js';
 import { FACTION, INK_DARK, NEUTRAL } from './palette.js';
 import { MapRenderer, drawMinimap, type Camera } from './renderer.js';
+import type { RoomInfo, RoomSettings } from '@sc/protocol/client';
+import { ServerLink, savedResume, serverAvailable, serverUrl } from './net.js';
+import { OnlineSession, type OnlineUpdate } from './online-session.js';
 import { SoundBoard } from './sound.js';
 import { Tutorial } from './tutorial.js';
 import { GameSession, type Difficulty, type GameMode, type NewGameOptions, type SavedSession } from './session.js';
@@ -73,6 +76,14 @@ class App {
   /** True while the computer players are taking their turns (input is paused). */
   private botsPlaying = false;
   private readonly sound = new SoundBoard();
+  /** Online play: connection to the game server and the room we are in. */
+  private link: ServerLink | null = null;
+  private room: RoomInfo | null = null;
+  private onlineAvailable = false;
+  /** Unit whose command is in flight (selection continues when the server answers). */
+  private pendingUnit: UnitId | null = null;
+  private prevPositions = new Map<string, Coord>();
+  private shownCombat: unknown = null;
   private tutorial!: Tutorial;
 
   private readonly root = el('div', { class: 'app' });
@@ -113,6 +124,23 @@ class App {
 
   // ─── Game lifecycle ────────────────────────────────────────────────────────
 
+  /** Check for a game server; rejoin the last online room, or open the join form for ?sala=. */
+  async checkOnline(): Promise<void> {
+    this.onlineAvailable = await serverAvailable();
+    if (!this.onlineAvailable) return;
+    const resume = savedResume();
+    const code = new URLSearchParams(location.search).get('sala');
+    if (resume && (!code || code.toUpperCase() === resume.room)) this.connect(resume.name);
+    else if (code) this.showSetup('online');
+    setInterval(() => {
+      if (this.online?.deadline) {
+        const el = this.bar.querySelector('#clock b');
+        const left = Math.max(0, Math.ceil((this.online.deadline - Date.now()) / 1000));
+        if (el) el.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+      }
+    }, 1000);
+  }
+
   start(saved?: SavedSession | null): void {
     try {
       this.session = saved?.version === 1 ? GameSession.restore(saved) : GameSession.create(this.defaultOptions());
@@ -123,6 +151,13 @@ class App {
   }
 
   newGame(options: NewGameOptions): void {
+    if (this.link) {
+      this.link.leave();
+      this.link.close();
+      this.link = null;
+      this.room = null;
+      this.botBanner.hidden = true;
+    }
     this.session = GameSession.create(options);
     this.afterNewSession();
   }
@@ -152,6 +187,16 @@ class App {
     if (capital) this.renderer.centerOn(capital.position);
   }
 
+  private get online(): OnlineSession | null {
+    return this.session instanceof OnlineSession ? this.session : null;
+  }
+
+  /** Input waits while bots play, while it's someone else's turn online, or a command is in flight. */
+  private get locked(): boolean {
+    const o = this.online;
+    return this.botsPlaying || (!!o && (!o.isMyTurn || o.busy > 0));
+  }
+
   private factionOf(p: PlayerId | null): string {
     if (!p) return NEUTRAL;
     return FACTION[this.session.playerIndex(p)] ?? NEUTRAL;
@@ -173,6 +218,7 @@ class App {
   }
 
   private persist(): void {
+    if (this.online) return; // online games live on the server
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(this.session.save()));
     } catch {
@@ -222,7 +268,7 @@ class App {
 
   private clickTile(t: Coord): void {
     const s = this.session;
-    if (this.botsPlaying || !s.world.grid.inBounds(t) || s.match.status !== 'playing') return;
+    if (this.locked || !s.world.grid.inBounds(t) || s.match.status !== 'playing') return;
     const unit = this.selectedUnit();
     if (unit && this.targets?.has(s.world.grid.index(t))) return this.attack(unit, t);
     if (unit && this.assaults?.has(s.world.grid.index(t))) return this.assault(unit, t);
@@ -260,6 +306,7 @@ class App {
   }
 
   private move(unit: Unit, goal: Coord, plan: PlannedPath): void {
+    if (this.online) return this.sendOnline(unit, () => this.session.moveTo(unit.id, goal), 'move');
     const from = { ...unit.position };
     const logBefore = this.session.log.length;
     const msg = this.session.moveTo(unit.id, goal);
@@ -278,6 +325,7 @@ class App {
   }
 
   private attack(unit: Unit, target: Coord): void {
+    if (this.online) return this.sendOnline(unit, () => this.session.attack(unit.id, target), 'attack');
     const at = { ...unit.position };
     const msg = this.session.attack(unit.id, target);
     if (msg) this.toast(msg, true);
@@ -297,6 +345,7 @@ class App {
 
   /** Move next to the target and attack, in one click. */
   private assault(unit: Unit, target: Coord): void {
+    if (this.online) return this.sendOnline(unit, () => this.session.assault(unit.id, target), 'attack');
     const plan = this.session.assaultPlan(unit.id, target);
     if (!plan) return this.toast('No hay forma de atacar ese objetivo este turno.');
     const from = { ...unit.position };
@@ -373,6 +422,16 @@ class App {
 
   private endTurn(): void {
     const s = this.session;
+    if (this.online) {
+      if (this.locked || s.match.status !== 'playing') return;
+      this.tutorial.done('end');
+      this.online.endTurn();
+      this.sel = null;
+      this.report.hidden = true;
+      this.renderBar();
+      this.showWaiting();
+      return;
+    }
     if (this.botsPlaying || s.match.status !== 'playing' || s.awaitingHandoff) return;
     this.cameras.set(s.viewer, { ...this.renderer.camera });
     s.endTurn({ runBots: false });
@@ -496,7 +555,7 @@ class App {
     const s = this.session;
     const p = s.viewer;
     const idle = s.idleUnits().length;
-    const total = [...s.world.allCities()].length;
+    const total = s.totalCities();
     const mine = s.world.citiesOf(p).length;
     const army = s.world.unitsOf(p).length;
     const cap = armyCap(s.world, p);
@@ -509,6 +568,7 @@ class App {
           <span class="share" style="--v:${Math.round((mine / Math.max(1, total)) * 100)}%"></span></span>
         <span class="stat ${army >= cap ? 'over' : ''}" title="Cada ciudad sostiene 5 unidades más (base 6). Al límite, las ciudades no producen."><small>Ejército</small><b>${army}</b><i>/${cap}</i></span>
         <span class="stat ${idle ? 'pending' : 'done'}"><small>Por mover</small><b>${idle}</b></span>
+        ${this.onlineReadout()}
       </div>
       <div class="spacer"></div>
       <div class="actions">
@@ -527,7 +587,183 @@ class App {
     this.bar.querySelector('#btn-new')!.addEventListener('click', () => this.showSetup());
     this.bar.querySelector('#btn-next')!.addEventListener('click', () => this.nextUnit());
     this.bar.querySelector('#btn-end')!.addEventListener('click', () => this.endTurn());
-    this.bar.querySelectorAll<HTMLButtonElement>('#btn-end, #btn-next').forEach((b) => (b.disabled = this.botsPlaying));
+    this.bar.querySelectorAll<HTMLButtonElement>('#btn-end, #btn-next').forEach((b) => (b.disabled = this.locked));
+  }
+
+  /** Online: whose turn it is, the clock, and the connection. */
+  private onlineReadout(): string {
+    const o = this.online;
+    if (!o) return '';
+    const active = o.match.activePlayer;
+    const turn = o.isMyTurn
+      ? '<span class="stat done"><small>Turno</small><b>Tuyo</b></span>'
+      : active ? `<span class="stat"><small>Turno de</small><b class="who" style="color:${this.factionOf(active)}">${esc(o.nameOf(active))}</b></span>` : '';
+    const left = o.deadline ? Math.max(0, Math.ceil((o.deadline - Date.now()) / 1000)) : null;
+    const clock = left === null ? '' : `<span class="stat ${left <= 15 ? 'over' : ''}" id="clock"><small>Reloj</small><b>${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</b></span>`;
+    const net = this.link?.connected ? '' : '<span class="stat over"><small>Conexión</small><b>Reconectando…</b></span>';
+    return `<span class="stat"><small>Sala</small><b>${esc(this.room?.code ?? '')}</b></span>${turn}${clock}${net}`;
+  }
+
+  // ─── Online play ───────────────────────────────────────────────────────────
+
+  /** Send a command; the picture (and the next unit) updates when the server answers. */
+  private sendOnline(unit: Unit, run: () => string | null, sfx: 'move' | 'attack'): void {
+    this.prevPositions = new Map(this.session.world.unitsOf(this.session.viewer).map((u) => [u.id, { ...u.position }]));
+    this.pendingUnit = unit.id;
+    const msg = run();
+    if (msg) {
+      this.pendingUnit = null;
+      this.toast(msg, true);
+      return;
+    }
+    this.sound.play(sfx);
+    this.renderBar();
+  }
+
+  private connect(name: string, then?: (link: ServerLink) => void): void {
+    const url = serverUrl();
+    if (!url) return this.toast('No hay servidor de juego en esta página.', true);
+    if (!this.link) {
+      const resume = savedResume();
+      this.link = new ServerLink(url, name, {
+        room: (room, you) => this.onRoom(room, you),
+        state: (state, events) => this.onServerState(state, events),
+        error: (_code, message) => this.toast(message, true),
+        status: () => this.renderBar(),
+      }, resume && resume.name === name ? resume : undefined);
+    }
+    then?.(this.link);
+  }
+
+  private onRoom(room: RoomInfo, _you: number): void {
+    this.room = room;
+    this.online?.updateRoom(room);
+    if (room.status === 'lobby') this.showLobby();
+    else if (this.overlay.dataset.lobby) {
+      delete this.overlay.dataset.lobby;
+      this.overlay.hidden = true;
+    }
+    if (this.session) this.renderBar();
+  }
+
+  private onServerState(state: import('@sc/protocol/client').OnlineView, events: import('@sc/core').TurnEvent[]): void {
+    const o = this.online;
+    if (!o || o.room.code !== this.room?.code) {
+      if (!this.room || !this.link) return;
+      const session = OnlineSession.fromServer(this.link, state, this.room);
+      session.onUpdate = (kind) => this.onRemoteUpdate(kind);
+      session.onError = (m) => {
+        this.pendingUnit = null;
+        this.toast(m, true);
+        this.refresh();
+      };
+      delete this.overlay.dataset.lobby;
+      delete this.overlay.dataset.setup;
+      this.overlay.hidden = true;
+      this.session = session;
+      this.afterNewSession();
+      if (!session.isMyTurn) this.showWaiting();
+      return;
+    }
+    o.applyServerState(state, events);
+  }
+
+  /** The server changed the picture: animate what moved, then continue where we were. */
+  private onRemoteUpdate(kind: OnlineUpdate): void {
+    const s = this.session;
+    const now = performance.now();
+    for (const u of s.world.unitsOf(s.viewer)) {
+      const was = this.prevPositions.get(u.id);
+      if (was && !sameCoord(was, u.position) && u.carriedBy === null) this.renderer.animateMove(u.id, u.type, u.owner, was, [u.position], now);
+    }
+    this.prevPositions.clear();
+    const r = s.lastCombat;
+    if (r && r !== this.shownCombat) {
+      this.shownCombat = r;
+      this.renderer.blast(r.target, r.defenderDestroyed ? 'DESTRUIDO' : `−${r.damageToDefender}`, r.defenderDestroyed, now);
+      this.sound.play(r.defenderDestroyed || r.attackerDestroyed ? 'explosion' : 'attack');
+    }
+    this.refresh();
+    if (kind === 'turn-started') {
+      this.botBanner.hidden = true;
+      this.startOwnTurn();
+      return;
+    }
+    if (!this.online?.isMyTurn) this.showWaiting();
+    const id = this.pendingUnit;
+    if (id && (this.online?.busy ?? 0) === 0) {
+      this.pendingUnit = null;
+      this.afterAction(id);
+    }
+  }
+
+  private showWaiting(): void {
+    const o = this.online;
+    if (!o || o.isMyTurn || o.match.status !== 'playing') {
+      this.botBanner.hidden = true;
+      return;
+    }
+    const p = o.match.activePlayer;
+    if (!p) return;
+    this.botBanner.innerHTML = `<span class="spinner" aria-hidden="true"></span>Turno de ${esc(o.nameOf(p))}…`;
+    this.botBanner.style.setProperty('--faction', this.factionOf(p));
+    this.botBanner.hidden = false;
+  }
+
+  /** Waiting room: code to share, seats, ready, start. */
+  private showLobby(): void {
+    const room = this.room;
+    const link = this.link;
+    if (!room || !link) return;
+    const o = this.overlay;
+    delete o.dataset.setup;
+    o.dataset.lobby = '1';
+    o.className = 'overlay';
+    o.hidden = false;
+    const me = link.seat;
+    const isHost = room.host === me;
+    const share = `${location.origin}${location.pathname}?sala=${room.code}`;
+    const seat = (x: RoomInfo['seats'][number]) => {
+      const status = x.kind === 'open'
+        ? (room.settings.fillWithBots ? 'libre · jugará un bot' : 'libre')
+        : x.kind === 'bot' ? 'bot' : x.index === me ? 'vos' : x.ready ? 'listo' : x.connected ? 'conectado' : 'desconectado';
+      return `<li class="${x.kind}"><span class="dot" style="background:${FACTION[x.index] ?? NEUTRAL}"></span><b>${esc(x.kind === 'open' ? `Asiento ${x.index + 1}` : x.name)}</b><small>${status}${x.index === room.host ? ' · anfitrión' : ''}</small></li>`;
+    };
+    const mine = room.seats[me];
+    o.innerHTML = `<div class="sheet lobby">
+      <h2>Sala <span class="code">${esc(room.code)}</span></h2>
+      <p class="muted">Pasales el código (o el enlace) a quienes quieras invitar. Cada uno entra desde esta misma página.</p>
+      <div class="row share"><input type="text" id="share" readonly value="${esc(share)}" /><button class="btn small" type="button" data-act="copy">Copiar enlace</button></div>
+      <ol class="seats">${room.seats.map(seat).join('')}</ol>
+      <p class="muted small">${room.settings.players} jugadores · ${typeof room.settings.size === 'string' ? room.settings.size : `${room.settings.size.width}×${room.settings.size.height}`} · ${room.settings.turnSeconds ? `reloj de ${Math.round(room.settings.turnSeconds / 60)} min por turno` : 'sin reloj'}${room.settings.fillWithBots ? ' · asientos libres con bots' : ''}</p>
+      <div class="row">
+        ${isHost ? '<button class="btn primary" type="button" data-act="start">Empezar partida</button>' : `<button class="btn primary" type="button" data-act="ready">${mine?.ready ? 'No estoy listo' : 'Estoy listo'}</button>`}
+        <button class="btn" type="button" data-act="leave">Salir de la sala</button>
+      </div></div>`;
+    o.querySelector('[data-act=copy]')!.addEventListener('click', async () => {
+      const input = o.querySelector<HTMLInputElement>('#share')!;
+      try {
+        await navigator.clipboard.writeText(input.value);
+        this.toast('Enlace copiado.');
+      } catch {
+        input.select();
+      }
+    });
+    o.querySelector('[data-act=start]')?.addEventListener('click', () => link.start());
+    o.querySelector('[data-act=ready]')?.addEventListener('click', () => link.setReady(!mine?.ready));
+    o.querySelector('[data-act=leave]')!.addEventListener('click', () => this.leaveOnline());
+  }
+
+  private leaveOnline(): void {
+    this.link?.leave();
+    this.link?.close();
+    this.link = null;
+    this.room = null;
+    delete this.overlay.dataset.lobby;
+    this.overlay.hidden = true;
+    this.botBanner.hidden = true;
+    if (this.online) this.newGame(this.defaultOptions());
+    else this.renderOverlay();
   }
 
   private renderStatus(): void {
@@ -602,7 +838,7 @@ class App {
     this.selPanel.innerHTML = `
       <div class="unit-head"><div class="badge-slot"></div>
         <div><h3>${UNIT_NAME[u.type]}</h3>
-        <p class="muted">${UNIT_CODE[u.type]} ${u.id.replace('u', '#')} · X${u.position.x} Y${u.position.y}${carrier ? ` · a bordo de ${UNIT_NAME[carrier.type]}` : ''}${u.silentRunning ? ' · en silencio' : ''}</p></div></div>
+        <p class="muted">${UNIT_CODE[u.type]} ${s.unitTag(u.id)} · X${u.position.x} Y${u.position.y}${carrier ? ` · a bordo de ${UNIT_NAME[carrier.type]}` : ''}${u.silentRunning ? ' · en silencio' : ''}</p></div></div>
       <dl class="stats two">
         <dt>Vida</dt><dd class="meter"><i style="--v:${hpPct}%;--meter:${meterColor}"></i>${u.hp}/${def.maxHp}</dd>
         <dt>Movim.</dt><dd class="meter"><i style="--v:${(u.movesLeft / u.maxMoves) * 100}%;--meter:var(--accent)"></i>${u.movesLeft}/${u.maxMoves}</dd>
@@ -729,7 +965,7 @@ class App {
   private renderOverlay(): void {
     const s = this.session;
     const o = this.overlay;
-    if (o.dataset.setup || o.dataset.help) return;
+    if (o.dataset.setup || o.dataset.help || o.dataset.lobby) return;
     if (s.match.status === 'finished') {
       const w = s.match.winner;
       const styles = [...s.bots].map((b) => `<li><b style="color:${this.factionOf(b)}">${esc(s.nameOf(b))}</b>: ${esc(s.botStyle(b))}</li>`).join('');
@@ -794,7 +1030,7 @@ class App {
     });
   }
 
-  private showSetup(): void {
+  private showSetup(tab: 'local' | 'online' = 'local'): void {
     const o = this.overlay;
     const prev = this.session?.options;
     o.className = 'overlay';
@@ -803,8 +1039,34 @@ class App {
     const opt = (v: string, label: string, cur?: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
     const prevSize = typeof prev?.size === 'object' ? 'custom' : prev?.size;
     const prevCustom = typeof prev?.size === 'object' ? prev.size : { width: 80, height: 50 };
+    const savedName = (() => { try { return localStorage.getItem('strategic-conquest:name') ?? ''; } catch { return ''; } })();
+    const joinCode = new URLSearchParams(location.search).get('sala') ?? '';
     o.innerHTML = `<form class="sheet" id="setup">
       <h2>Nueva partida</h2>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab ${tab === 'local' ? 'on' : ''}" data-tab="local" aria-selected="${tab === 'local'}">En esta computadora</button>
+        <button type="button" role="tab" class="tab ${tab === 'online' ? 'on' : ''}" data-tab="online" aria-selected="${tab === 'online'}">En línea</button>
+      </div>
+      <div class="tabpanel" data-panel="online" ${tab === 'online' ? '' : 'hidden'}>
+        ${this.onlineAvailable ? `
+        <label class="field" for="oname">Tu nombre<input type="text" id="oname" maxlength="24" value="${esc(savedName)}" autocomplete="nickname" /></label>
+        <fieldset class="join"><legend>Unirse a una sala</legend>
+          <div class="row"><input type="text" id="ocode" maxlength="12" placeholder="Código, p. ej. K7QX2M" value="${esc(joinCode)}" autocomplete="off" spellcheck="false" /><button class="btn" type="button" data-act="join">Unirse</button></div>
+        </fieldset>
+        <fieldset class="create"><legend>Crear una sala</legend>
+          <div class="grid2">
+            <label class="field" for="oplayers">Jugadores<select id="oplayers">${[2, 3, 4, 5, 6].map((n) => opt(String(n), `${n} jugadores`, '2')).join('')}</select></label>
+            <label class="field" for="osize">Mapa<select id="osize">${opt('small', 'Small · 60×40', 'small')}${opt('medium', 'Medium · 100×64')}${opt('huge', 'Huge · 160×100')}</select></label>
+            <label class="field" for="oclock">Reloj por turno<select id="oclock">${opt('0', 'Sin reloj', '120')}${opt('60', '1 minuto', '120')}${opt('120', '2 minutos', '120')}${opt('300', '5 minutos', '120')}${opt('900', '15 minutos', '120')}</select></label>
+            <label class="field" for="odiff">Bots<select id="odiff">${opt('normal', 'Normales', 'normal')}${opt('hard', 'Difíciles (+25%)')}${opt('brutal', 'Brutales (+50%)')}</select></label>
+            <label class="check wide"><input type="checkbox" id="obots" checked /> Completar los asientos libres con bots al empezar</label>
+          </div>
+          <div class="row"><button class="btn primary" type="button" data-act="create">Crear sala</button></div>
+        </fieldset>
+        <p class="muted small">Si alguien se desconecta o se le acaba el reloj, el bot juega su turno hasta que vuelva.</p>`
+        : `<p class="muted">El juego en línea necesita el servidor del juego: abrí la página que sirve el servidor (por ejemplo <code>http://tu-servidor:8080</code>) en vez de esta copia. Desde acá podés jugar contra la computadora o con otra persona en esta misma pantalla.</p>`}
+      </div>
+      <div class="tabpanel" data-panel="local" ${tab === 'local' ? '' : 'hidden'}>
       <p class="muted">Cada jugador ve sólo lo que descubrieron sus unidades. Contra la computadora jugás como Jugador 1, y cada bot elige un estilo de juego distinto por partida. La dificultad sólo acelera la producción de la computadora: nunca ve más que vos.</p>
       <div class="presets" role="group" aria-label="Partidas rápidas">
         <div class="preset duel" data-preset-card="duel"><b>Duelo</b><small>1 contra 1 · elegí el mapa</small>
@@ -829,9 +1091,50 @@ class App {
         <label class="field wide" for="seed">Semilla del mapa<input type="text" id="seed" value="${esc(randomSeed())}" autocomplete="off" spellcheck="false" /></label>
       </div>
       <p class="muted small">La misma semilla genera siempre el mismo mapa: compartila para jugar la misma geografía.</p>
-      <div class="row"><button class="btn primary" type="submit">Generar y jugar</button><button class="btn" type="button" data-act="cancel">Cancelar</button></div>
+      <div class="row"><button class="btn primary" type="submit">Generar y jugar</button></div>
+      </div>
+      <div class="row"><button class="btn" type="button" data-act="cancel">Cancelar</button></div>
     </form>`;
     const form = o.querySelector<HTMLFormElement>('#setup')!;
+    form.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((b) =>
+      b.addEventListener('click', () => {
+        form.querySelectorAll('[data-tab]').forEach((x) => {
+          x.classList.toggle('on', x === b);
+          x.setAttribute('aria-selected', String(x === b));
+        });
+        form.querySelectorAll<HTMLElement>('[data-panel]').forEach((p) => (p.hidden = p.dataset.panel !== b.dataset.tab));
+      }),
+    );
+    const onlineName = () => {
+      const n = (form.querySelector('#oname') as HTMLInputElement | null)?.value.trim() ?? '';
+      if (!n) {
+        this.toast('Poné tu nombre para jugar en línea.', true);
+        return null;
+      }
+      try { localStorage.setItem('strategic-conquest:name', n); } catch { /* storage unavailable */ }
+      return n;
+    };
+    form.querySelector('[data-act=join]')?.addEventListener('click', () => {
+      const name = onlineName();
+      const code = (form.querySelector('#ocode') as HTMLInputElement).value.trim();
+      if (!name) return;
+      if (code.length < 4) return this.toast('Escribí el código de la sala.', true);
+      this.connect(name, (link) => link.joinRoom(code));
+    });
+    form.querySelector('[data-act=create]')?.addEventListener('click', () => {
+      const name = onlineName();
+      if (!name) return;
+      const val = (id: string) => (form.querySelector(`#${id}`) as HTMLSelectElement).value;
+      const settings: RoomSettings = {
+        players: Number(val('oplayers')),
+        size: val('osize') as MapSize,
+        density: 'normal',
+        difficulty: val('odiff') as Difficulty,
+        turnSeconds: Number(val('oclock')),
+        fillWithBots: (form.querySelector('#obots') as HTMLInputElement).checked,
+      };
+      this.connect(name, (link) => link.createRoom(settings));
+    });
     const PRESETS: Record<string, { players: string; size: string; density: string }> = {
       all: { players: '4', size: 'medium', density: 'normal' },
       chaos: { players: '6', size: 'huge', density: 'normal' },
@@ -1023,7 +1326,7 @@ class App {
     });
 
     window.addEventListener('keydown', (e) => {
-      if (!this.overlay.hidden || this.botsPlaying || (e.target as HTMLElement).closest('input, select, textarea')) return;
+      if (!this.overlay.hidden || this.locked || (e.target as HTMLElement).closest('input, select, textarea')) return;
       const cam = this.renderer.camera;
       const step = 4;
       switch (e.key) {
@@ -1075,3 +1378,4 @@ function loadSaved(data: unknown): SavedSession | null {
 
 if (hot?.ready) hot.ready((data) => app.start(loadSaved(data)));
 else app.start(loadSaved(hot?.data));
+void app.checkOnline();

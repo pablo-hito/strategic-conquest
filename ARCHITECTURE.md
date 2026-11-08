@@ -268,10 +268,38 @@ Cómo llegó ahí (cada fila es una corrección medida con la arena):
 3. ~~Ciclo de turno: producción, reparación, combustible, aterrizaje en portaaviones, suministro, rotación y victoria~~ (hecho).
 4. ~~Generador de mapas con semilla reproducible y reparto equitativo~~ (hecho). **Fase 1 completa.**
 
-## 6. Fase 2 (siguiente)
-1. `packages/protocol`: mensajes cliente↔servidor tipados y validados (zod), versionados.
-2. `packages/server`: Fastify + `ws`; salas con código de invitación, configuración de mapa, `Match` en memoria + persistencia de snapshots, deltas de niebla por jugador, reconexión, reloj de turno.
-3. IDs opacos por observador en `PlayerView`.
-4. ~~Bot simple~~ (hecho, `packages/ai`): falta conectarlo al servidor para reemplazar a jugadores desconectados.
+## 6. Fase 2: multijugador en línea (implementado)
 
-Pendientes de diseño anotados: límites de apilamiento y zonas de control (no están en la especificación, se pueden sumar en `checkStep`). Además, los IDs secuenciales filtran cuántas unidades produjo un rival; antes de la Fase 2 conviene usar IDs opacos por observador en `PlayerView`.
+### `packages/protocol`
+- Mensajes cliente→servidor validados con **zod** (`parseClientMessage` nunca lanza; tope de 16 KB por mensaje): `hello` (versión, nombre, `resume` con sala+token), `create` (configuración de sala), `join`, `ready`, `start`, `leave`, `cmd` (con id de correlación) y `ping`.
+- Comandos de juego: `move` (camino de ≤300 pasos), `attack`, `production`, `specialize`, `silent`, `board`, `disband`, `endTurn`.
+- Mensajes servidor→cliente: `welcome` (token), `room` (asientos y estado de la sala), `state` (vista completa), `patch` (diferencias + eventos), `ack` (ok con eventos y resultado del movimiento, o error con código), `error`, `pong`.
+- `PROTOCOL_VERSION` se verifica en el `hello`. El cliente importa `@sc/protocol/client`, que trae sólo tipos y el diff/patch (sin zod, para no engordar el bundle).
+- **Diferencias de vista** (`diffView`/`applyPatch`): casillas como arreglos dispersos, listas de entidades enteras, metadatos. Un turno típico pesa pocos KB.
+
+### `packages/server`
+- Node `http` + `ws`, sin framework. Sirve el cliente (`play.html`) en `/` y `/health` para monitoreo.
+- **Salas** con código de 6 caracteres (sin letras ambiguas), anfitrión, asientos, “listo”, inicio, y bots que completan los asientos libres si se pide.
+- **Servidor autoritativo**: el `Match` vive sólo en el servidor; cada jugador recibe su `PlayerView` con niebla, nunca el estado completo.
+- **IDs opacos por observador** (`IdMask`): cada jugador ve otros identificadores (“k” + 10 hex) para las mismas unidades, así no puede deducir cuántas produjo un rival ni seguirlas entre avistamientos. Los eventos se filtran por audiencia (`eventsFor`) y se enmascaran.
+- **Reloj de turno** configurable (0 = sin límite). Al vencer, si el jugador está conectado se le termina el turno; si no, juega el bot.
+- **Reconexión**: token por asiento guardado en el navegador; al recargar o perder la red el cliente reintenta con espera creciente y retoma su asiento. Pasado el período de gracia (`GRACE_MS`, 20 s por defecto) un **bot toma el asiento** mientras la persona no vuelva; al volver recupera el control.
+- **Persistencia**: cada sala se guarda (con escritura atómica y agrupada) en `DATA_DIR/rooms/CODIGO.json`; al reiniciar el servidor las partidas siguen.
+- Límite de 25 mensajes/s por conexión, ping cada 30 s, barrido de salas terminadas o abandonadas.
+
+### Cliente en línea
+- `ServerLink` (WebSocket con reconexión) y `OnlineSession`, que extiende `GameSession`: cada vista recibida se convierte en un **mundo sombra** (`buildShadowMatch`), un `Match` local armado sólo con lo que el jugador conoce, sobre el que corren la planificación de rutas, los pronósticos de combate y el ciclo de unidades del modo local. Los comandos se envían al servidor; la respuesta (eventos y vista nueva) reemplaza a la sombra.
+- Pestaña “En línea” en Nueva partida: crear sala (jugadores, tamaño, reloj, dificultad de bots), unirse por código o por enlace `?sala=CODIGO`.
+- El artefacto publicado en claude.ai no puede abrir conexiones de red: allí sólo funciona el modo local. El juego en línea se usa desde la página que sirve el propio servidor.
+
+### Pruebas
+- `packages/protocol`: validación y ida y vuelta de diferencias.
+- `packages/server`: sala, rechazos, bots, orden de turnos, validación con IDs opacos, aislamiento de niebla, reanudación con token, relevo por bot, reloj, reinicio con persistencia y mensajes malformados (con clientes WebSocket reales).
+- `packages/client`: sesión en línea contra un servidor simulado. Además se probó con dos navegadores reales (Playwright): sala, enlace, turnos, recarga a mitad de partida y relevo por bot al cerrar un navegador (el bot jugó el turno en ~3 s con `GRACE_MS` corto).
+
+## 7. Próximos pasos
+1. Modo simultáneo (WEGO) como segundo orquestador sobre las mismas reglas.
+2. Chat de sala y espectadores.
+3. Cuentas y ranking (hoy la identidad es un token por asiento).
+
+Pendientes de diseño anotados: límites de apilamiento y zonas de control (no están en la especificación, se pueden sumar en `checkStep`).

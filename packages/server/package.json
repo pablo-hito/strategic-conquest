@@ -1,0 +1,21 @@
+{
+  "name": "@sc/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Strategic Conquest game server: rooms, authoritative matches, per-player views over WebSocket",
+  "type": "module",
+  "scripts": {
+    "start": "node dist/server.mjs",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/ws": "^8.5.13"
+  }
+}
