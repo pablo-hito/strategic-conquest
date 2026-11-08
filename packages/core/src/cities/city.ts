@@ -126,7 +126,7 @@ export class City {
    * Advance production one turn. Returns the unit type completed this turn, if any.
    * Ships stall (without losing progress) while the port is disabled.
    */
-  tickProduction(): UnitTypeId | null {
+  tickProduction(advancePortTimer = true): UnitTypeId | null {
     let completed: UnitTypeId | null = null;
     const order = this.s.production;
     if (order && !this.isNeutral) {
@@ -139,7 +139,7 @@ export class City {
         }
       }
     }
-    if (this.s.portDisabledTurns > 0) this.s.portDisabledTurns -= 1;
+    if (advancePortTimer && this.s.portDisabledTurns > 0) this.s.portDisabledTurns -= 1;
     return completed;
   }
 

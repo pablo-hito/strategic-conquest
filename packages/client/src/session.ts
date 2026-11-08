@@ -32,12 +32,17 @@ import { STOP_TEXT, UNIT_NAME, playerName } from './labels.js';
 /** 'bots': player 1 is you, everyone else is the computer. 'hotseat': all humans. */
 export type GameMode = 'bots' | 'hotseat';
 
+/** How much faster the computer's cities produce (it never sees more than you). */
+export type Difficulty = 'normal' | 'hard' | 'brutal';
+export const DIFFICULTY_BONUS: Record<Difficulty, number> = { normal: 0, hard: 0.25, brutal: 0.5 };
+
 export interface NewGameOptions {
   readonly size: MapSize;
   readonly density: IslandDensity;
   readonly players: number;
   readonly seed: string;
   readonly mode?: GameMode;
+  readonly difficulty?: Difficulty;
 }
 
 export type Tone = 'info' | 'good' | 'warn' | 'bad';
@@ -85,7 +90,9 @@ export class GameSession {
   static create(options: NewGameOptions): GameSession {
     const players = Array.from({ length: options.players }, (_, i) => PlayerId(`p${i + 1}`));
     const map = generateMap({ size: options.size, density: options.density, seed: options.seed }, players);
-    const { match, report } = Match.start(map.world, players, undefined, options.seed);
+    const bonus = DIFFICULTY_BONUS[options.difficulty ?? 'normal'];
+    const handicap = options.mode === 'bots' && bonus > 0 ? Object.fromEntries(players.slice(1).map((p) => [p, bonus])) : {};
+    const { match, report } = Match.start(map.world, players, undefined, options.seed, handicap);
     const s = new GameSession(options, match);
     s.push('all', `Mapa "${options.seed}": ${map.report.cities} ciudades en ${map.report.islands} islas.`, 'info');
     s.pushEvents(report.events);
@@ -115,7 +122,15 @@ export class GameSession {
 
   get world() { return this.match.world; }
   get players(): readonly PlayerId[] { return this.match.order; }
-  get viewer(): PlayerId { return this.match.activePlayer ?? this.match.winner ?? this.players[0]!; }
+  /**
+   * Whose eyes the screen shows. Against the computer it is always the human (even
+   * while the bots play or after one wins), so a bot's view never leaks; between
+   * humans it follows the turn (the handoff screen hides the switch).
+   */
+  get viewer(): PlayerId {
+    if (this.bots.size > 0) return this.players.find((p) => !this.bots.has(p))!;
+    return this.match.activePlayer ?? this.match.winner ?? this.players[0]!;
+  }
 
   playerIndex(p: PlayerId): number {
     return this.players.indexOf(p);

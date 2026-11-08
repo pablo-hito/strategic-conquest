@@ -160,60 +160,96 @@ Medido sobre 15 semillas por combinación (3 tamaños × 3 densidades × 2/4/6 j
 
 Valores de referencia (unidades sanas, en llanura): infantería vs infantería −4 / contraataque −3,5; tanque vs infantería −8,6 / −1,2; tanque vs tanque −5,7 / −4,8; submarino vs portaaviones −9,7 de 16; antiaéreo vs CAS −6,1 de 8.
 
-## 3h. Bot (`packages/ai`)
+## 3h. Bots (`packages/ai`)
 
-`playBotTurn(match, jugador)` juega un turno completo con los mismos comandos de `Match` que usa un humano y decide **sólo con su propia niebla de guerra** (ciudades conocidas, unidades detectadas, casillas exploradas). No puede ver a través de la niebla: las rutas se planifican con `fogKnowledge` y los objetivos salen de lo que el jugador conoce. Es determinista: la misma partida produce siempre las mismas jugadas. El servidor lo usará para reemplazar a jugadores desconectados.
+Hay dos bots, y los dos juegan con los mismos comandos de `Match` que usa un humano y deciden **sólo con su propia niebla de guerra** (ciudades conocidas, unidades detectadas, casillas exploradas): las rutas se planifican con `fogKnowledge` y los objetivos salen de lo que el jugador conoce. Son deterministas: la misma partida produce siempre las mismas jugadas.
 
-**Prioridades por unidad:**
-1. Tomar ataques favorables desde donde está (daño infligido ≥ 1,2 × daño recibido, o destruir al defensor; nunca un ataque suicida).
-2. Infantería: defender ciudades propias amenazadas; capturar la ciudad ajena conocida más cercana alcanzable por tierra; si no, explorar su isla; si no queda nada, subir a un transporte o esperarlo.
-3. Tanques: acercarse a enemigos terrestres conocidos; cuando la isla está resuelta, también se embarcan y desembarcan junto a ciudades enemigas.
-4. Transportes: esperar en el puerto más cercano a la tropa ociosa y, con carga, navegar hasta la costa enemiga conocida más cercana (o explorar).
-5. Destructores: cazar barcos enemigos conocidos; si no, llevar la pelea a la costa enemiga; si no, explorar el mar.
-6. Cazas: salidas de exploración dentro de la mitad de su autonomía y vuelta a la base al turno siguiente.
+- `playBotTurn`: el **bot estratégico**, el que usa el visor.
+- `playSimpleBotTurn`: el bot anterior, que se conserva como rival de referencia para medir al nuevo (`bench/arena.test.ts`).
 
-**Producción:** infantería (con un tanque cada cuatro) mientras la isla tenga trabajo; con tropa ociosa, transportes en proporción; después destructores (1 cada 3 ciudades) y cazas (1 cada 5). El bot recuerda entre turnos cuántas unidades quedaron ociosas, y nunca cambia una orden que ya tiene progreso.
+**Personalidades.** En cada partida el bot juega con una de cuatro, derivada del mapa y su asiento (varía de partida en partida, pero es estable dentro de una misma partida y después de recargar). Cambian el ritmo, la mezcla de producción, cuánto defienden y cómo atacan:
 
-**Rendimiento:** antes de buscar rutas, el bot agrupa la tierra explorada en masas de tierra y sólo busca destinos alcanzables desde la de cada unidad; además las búsquedas se cortan a 12 turnos (`findPath(..., { maxTurns })`). Un turno típico tarda 5–100 ms, y bajo 1 s en partidas largas con cientos de unidades.
+| Personalidad | Expande hasta | Guarnición | Estilo de ataque | Producción de guerra |
+|---|---|---|---|---|
+| Conquistador | ronda 45 | 1 | incursiones continuas | infantería y tanques, destructores, cazas |
+| Relámpago | ronda 30 | 1 | golpe masivo (6) | tanques, mecanizada, apoyo aéreo cercano |
+| Fortaleza | ronda 40 | 2 (todas las ciudades) | golpe masivo (8) | tanques, artillería, antiaéreos, bombarderos |
+| Almirante | ronda 35 | 1 | incursiones continuas | destructores, submarinos, acorazado, portaaviones |
 
-**Limitación conocida:** dos bots iguales tienden a empatar a mitad de partida y acumular ejércitos grandes. No es un problema del bot sino de la economía: unas 20 ciudades producen varias unidades por turno y nada las consume. Una regla de mantenimiento o de suministro por ciudad lo resolvería (pendiente de diseño).
+**Plan de juego.**
+1. *Expansión*: infantería a toda ciudad neutral alcanzable por tierra (máximo 2 exploradores por isla, el resto trabaja), un dron de reconocimiento temprano para descubrir islas, y transportes que llevan infantería a las islas vecinas. Mientras la isla tiene trabajo, las ciudades producen infantería.
+2. *Guerra* (al terminar la ventana de expansión, o antes si hay contacto con el enemigo): producción según la personalidad y objetivo elegido entre las ciudades enemigas conocidas (pocas defensas, cercanía, algo de azar en bloques de 10 rondas para no ser predecible).
+   - *Incursiones*: cada transporte zarpa apenas tiene carga, hacia la costa útil más cercana, prefiriendo ciudades sin defensores conocidos. Presión constante.
+   - *Golpe masivo*: la fuerza se reúne en el puerto de concentración (cerca del objetivo y en una isla donde haya tropas) y desembarca toda junta, con a lo sumo 3 turnos de espera: el ataque sorpresa.
+3. *Siempre*: guarnición en ciudades amenazadas, costeras y del frente; respuesta a desembarcos en sus islas; ataques favorables según el margen de la personalidad (nunca suicidas); modo defensivo durante 6 rondas después de perder una ciudad; transportes que huyen de barcos enemigos; destructores que cazan transportes cerca de su costa y escoltan los propios; aviones que atacan lo que alcanzan y vuelven a la base.
+
+**Reglas de embarque**: la infantería siempre embarca; los tanques sólo si el transporte ya lleva infantería (toda expedición tiene que poder tomar la ciudad) y sólo cuando el objetivo es enemigo. Las guarniciones prefieren unidades que no capturan, para liberar infantería.
+
+**Rendimiento**: el bot agrupa la tierra explorada en masas de tierra y sólo busca destinos alcanzables; las búsquedas se cortan a 10 turnos (40 dentro de la misma isla, donde la ruta existe seguro). Turno típico: 5–300 ms; bajo 1,5 s en partidas largas con cientos de unidades.
+
+**Dificultad** (sólo contra la computadora): Normal (sin ventaja), Difícil (+25% de producción) y Brutal (+50%). Es un turno extra de producción cada 4 o cada 2 rondas (`Match.start(..., productionBonus)`), determinista y guardado con la partida. **Nunca cambia lo que el bot ve.**
+
+**Cómo se midió**: ver "Mediciones" en la sección 4b.
 
 ## 3f. Visor local (`packages/client`)
 
-Primer cliente: Vite + TypeScript + Canvas 2D, sin framework. Juega partidas locales por turnos (hot-seat) usando `Match` exactamente como lo hará el servidor, y **sólo dibuja el `PlayerView` del jugador activo**: entre turnos una pantalla opaca oculta el mapa hasta que el siguiente jugador toma el control.
+Vite + TypeScript + Canvas 2D, sin framework. Juega partidas locales (contra la computadora o entre humanos en la misma pantalla) usando `Match` exactamente como lo hará el servidor, y **sólo dibuja el `PlayerView` del jugador humano**: contra la computadora siempre el tuyo (también mientras juegan los bots y al terminar la partida); entre humanos, una pantalla opaca oculta el mapa en cada cambio de turno.
 
-- `session.ts`: sesión de juego sin DOM (comandos, órdenes de varios turnos "ir a", registro de eventos filtrado por audiencia, guardado). Tiene tests propios.
-- `renderer.ts`: mapa con zoom y desplazamiento, costas, relieve, niebla (negro = sin explorar, velo = recordado), ciudades y fichas cuya forma indica el dominio (cuadrado = tierra, casco = mar, rombo = aire), alcance del turno y ruta con marcadores de turno; minimapa.
-- `main.ts`: interfaz (panel de unidad y de ciudad con producción y especialización, registro táctico, nueva partida con semilla y rivales: computadora o humanos), mouse, teclado y gestos táctiles. Autoguardado en `localStorage`.
-- Contra la computadora, al terminar el turno juegan los bots y vuelve a ser tu turno; sin pantalla de cambio de jugador porque no hay a quién ocultarle el mapa.
+- `session.ts`: sesión de juego sin DOM: comandos, órdenes de varios turnos ("ir a"), orden de las unidades (transportes primero, después barcos, aviones y tierra; la tropa embarcada en altamar se saltea y reaparece cuando su transporte está junto a tierra), bots que juegan de a uno, registro filtrado por audiencia, guardado.
+- `renderer.ts`: terreno pintado en bloques de 16×16 casillas y cacheado (costas redondeadas con espuma y playa, pasto, bosques, colinas sombreadas, montañas con nieve), pintado sólo con lo explorado; niebla con bordes suaves (una máscara de 1 píxel por casilla escalada con suavizado); ciudades con edificios y ventanas; fichas con siluetas por tipo de unidad sobre el color de la facción (cuadrado = tierra, casco = mar, círculo = aire); unidad activa con halo, anillo giratorio y flecha; punto verde en las unidades que todavía pueden moverse y atenuadas las que ya movieron; animación de movimiento y explosiones con el número de daño; minimapa.
+- `icons.ts`: siluetas vectoriales de las 18 unidades.
+- `main.ts`: barra superior (ronda, ciudades, unidades por mover, Siguiente, Fin de turno), panel derecho fijo **sin scroll** (selección, plano estratégico y registro táctico que ocupa el resto), ayuda con "?", nueva partida (rivales, dificultad, jugadores, tamaño, densidad, semilla), mouse, teclado y gestos táctiles. Autoguardado en `localStorage`.
 - `scripts/build-standalone.mjs`: empaqueta todo en un único HTML.
-
-Con una unidad seleccionada, los enemigos atacables se marcan en rojo; al pasar el cursor se ve el pronóstico de daño y con un clic se ataca.
 
 ## 4. Valores iniciales de balance (tunables)
 
-| Unidad | Clase mov. | MP | Visión | HP | Atk/Def | Turnos | Notas |
-|---|---|---|---|---|---|---|---|
-| Recon | wheeled | 3 | 3 | 6 | 1/1 | 3 | |
-| Infantry | foot | 1 | 1 | 10 | 2/2 | 4 | captura, atrinchera (+20%/turno, máx. +60%) |
-| Mech Infantry | tracked | 2 | 1 | 10 | 3/3 | 6 | captura, atrinchera |
-| Heavy Tank | tracked | 2 | 1 | 12 | 6/4 | 8 | |
-| Artillery | tracked | 1 | 1 | 8 | 6/1 | 8 | rango 2–3, no mueve tras disparar |
-| Anti-Air | wheeled | 2 | 2 | 8 | 2/2 | 6 | intercepta a 2 |
-| Corvette | naval | 5 | 2 | 6 | 2/2 | 5 | |
-| Destroyer | naval | 4 | 2 | 10 | 4/3 | 10 | sonar 2 |
-| Missile Cruiser | naval_heavy | 3 | 3 | 14 | 6/5 | 16 | rango 1–4, AA 3, Naval Yard |
-| Submarine | naval | 3 | 1 | 8 | 7/2 | 12 | Silent Running: sigilo, ½ MP |
-| Battleship | naval_heavy | 3 | 2 | 20 | 8/7 | 20 | rango 1–3, Naval Yard |
-| Carrier | naval_heavy | 3 | 2 | 16 | 1/4 | 20 | 3 aéreos, Naval Yard |
-| Transport | naval | 3 | 2 | 8 | 0/1 | 8 | 3 terrestres |
-| Recon Drone | air | 10 | 4 | 3 | 0/0 | 4 | combustible 30 |
-| Fighter | air | 10 | 2 | 8 | 5/4 | 8 | combustible 20 |
-| CAS | air | 8 | 2 | 8 | 7/2 | 10 | combustible 16 |
-| Strategic Bomber | air | 6 | 2 | 12 | 8/2 | 15 | combustible 30, Air Base |
-| AWACS | air | 6 | 8 | 6 | 0/1 | 14 | ojo 10, Air Base |
+| Unidad | Clase mov. | MP | Visión | HP | Tamaño | Atk/Def | Turnos | Notas |
+|---|---|---|---|---|---|---|---|---|
+| Recon | wheeled | 5 | 3 | 6 | 2 | 1/1 | 3 | |
+| Infantry | foot | 2 | 2 | 10 | 1 | 2/2 | 4 | captura, atrinchera (+20%/turno, máx. +60%) |
+| Mech Infantry | tracked | 3 | 2 | 10 | 2 | 3/3 | 6 | captura, atrinchera |
+| Heavy Tank | tracked | 3 | 2 | 12 | 3 | 6/4 | 8 | |
+| Artillery | tracked | 2 | 2 | 8 | 2 | 6/1 | 8 | rango 2–3, no mueve tras disparar |
+| Anti-Air | wheeled | 3 | 3 | 8 | 2 | 2/2 | 6 | intercepta a 2 |
+| Corvette | naval | 7 | 3 | 6 | – | 2/2 | 5 | |
+| Destroyer | naval | 6 | 3 | 10 | – | 4/3 | 10 | sonar 2 |
+| Missile Cruiser | naval_heavy | 5 | 3 | 14 | – | 6/5 | 16 | rango 1–4, AA 3, Naval Yard |
+| Submarine | naval | 5 | 2 | 8 | – | 7/2 | 12 | Silent Running: sigilo, ½ MP |
+| Battleship | naval_heavy | 4 | 3 | 20 | – | 8/7 | 20 | rango 1–3, Naval Yard |
+| Carrier | naval_heavy | 5 | 3 | 16 | – | 1/4 | 20 | capacidad 6 aérea, Naval Yard |
+| Transport | naval | 6 | 2 | 8 | – | 0/1 | 8 | capacidad 6 terrestre |
+| Recon Drone | air | 14 | 5 | 3 | 1 | 0/0 | 4 | combustible 42 |
+| Fighter | air | 12 | 3 | 8 | 2 | 5/4 | 8 | combustible 24 |
+| CAS | air | 10 | 3 | 8 | 2 | 7/2 | 10 | combustible 20 |
+| Strategic Bomber | air | 10 | 3 | 12 | 3 | 8/2 | 15 | combustible 40, Air Base |
+| AWACS | air | 8 | 9 | 6 | 3 | 0/1 | 14 | ojo 10, Air Base |
+
+**Carga por tamaño**: transportes y portaaviones tienen capacidad 6 y cada unidad ocupa su tamaño (infantería 1; reconocimiento, mecanizada, artillería y antiaéreo 2; tanque 3; en portaaviones: dron 1, caza y apoyo aéreo 2, bombardero y AWACS 3). Un transporte lleva, por ejemplo, 6 infanterías, o 2 tanques, o un tanque y 3 infanterías.
+
+**Movimiento**: todas las unidades se mueven entre 1,3× y 2× más que en la primera versión (los transportes, el doble), y el combustible de los aviones se escaló para mantener los mismos turnos de autonomía. Las unidades terrestres ganaron 1 de visión para no chocar a ciegas contra el enemigo a la nueva velocidad.
 
 Especializaciones: *Industrial Hub* (−25% turnos para blindados/artillería/AA/mecanizada), *Naval Yard* (requiere costa; habilita buques capitales), *Air Base* (−20% cazas/CAS, 10 hangares, habilita bombardero/AWACS). Bombardeo estratégico: progreso a la mitad y puerto cerrado 2 turnos (los barcos en producción se detienen sin perder progreso). Capturar una ciudad reinicia la producción (infantería) y conserva la especialización.
+
+## 4b. Mediciones del bot
+
+**Arena** (`ARENA=1 npx vitest run bench/arena.test.ts` en `packages/ai`): partidas completas entre el bot estratégico y el anterior, mapa chico, 20 mapas, alternando quién empieza, hasta la ronda 200, dificultad Normal. Resultado final: **13 victorias, 1 derrota y 6 empates**; terminó adelante en ciudades en 18 de las 20 partidas.
+
+Cómo llegó ahí (cada fila es una corrección medida con la arena):
+
+| Cambio | Victorias | Lección |
+|---|---|---|
+| Primera versión | 1 de 4 | expandía lento: el primer soldado quedaba de guarnición |
+| Sin guarnición mientras expande | 2 de 4 | |
+| Búsquedas largas dentro de la misma isla | 1 de 6 | las tropas no llegaban al puerto en continentes grandes |
+| Transportes que desembarcan junto a ciudades propias | 0 de 6 | estancamiento: tanques llevados a ciudades neutrales que no pueden capturar |
+| Tanques sólo con infantería a bordo; objetivo reevaluado cada turno | 3 de 6 | |
+| Estilo por personalidad: incursiones continuas o golpe masivo | 8 de 10 | la espera para concentrar fuerzas costaba más ritmo del que ganaba |
+| Mismo código en 20 mapas | 12 de 20 | |
+| Dron temprano y "mapa sin explorar = espacio para expandirse" | **13 de 20** | en un mapa no descubría ninguna ciudad hasta la ronda 35 |
+
+**Partidas completas a través del visor** (`FULLGAME=1 npx vitest run bench/fullgame.test.ts` en `packages/client`): la sesión del visor con mi asiento jugado por una estrategia guionada agresiva (la del bot anterior) contra el bot real. En Normal: 1 victoria del bot, 1 derrota y 2 partidas parejas. En **Difícil: el bot ganó las 4** (rondas 66 a 152).
+
+**Rendimiento**: 125 ms por ronda de promedio en el navegador (turno del bot incluido) en mapa chico; el turno más lento medido en partidas largas, 1,3 s.
 
 ## 5. Próximos pasos (Fase 1, continuación)
 1. ~~Movimiento: validación de pasos, caminos A\*, alcance, interrupción al contacto~~ (hecho).

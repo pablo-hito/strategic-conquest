@@ -292,8 +292,12 @@ class StrategicTurn {
     const cities = this.ownCities().length;
     if (cities < this.mem.citiesLast) this.mem.alertUntil = round + 6; // we just lost a city
 
+    // Unexplored map is room to expand too: not knowing a city is not the same as
+    // there being none.
     const expansionLeft =
-      this.knownNeutral().length > 0 || [...this.ownMasses()].some((m) => (this.frontierOf.get(m)?.length ?? 0) > 0);
+      this.knownNeutral().length > 0 ||
+      [...this.ownMasses()].some((m) => (this.frontierOf.get(m)?.length ?? 0) > 0) ||
+      this.unexplored.length > 0;
     const contact = this.knownEnemyCities().length > 0 || this.enemies.some((e) => e.def.domain === 'land');
     this.phase = round < this.p.expandUntil && expansionLeft && !(contact && round > this.p.expandUntil / 2) ? 'expand' : 'war';
 
@@ -373,8 +377,19 @@ class StrategicTurn {
     if (this.enemies.some((e) => e.def.domain === 'air')) mix.anti_air = (mix.anti_air ?? 0) + 1;
     const transportCap = Math.max(1, Math.min(6, Math.ceil(this.mem.idleLast / 3) + (this.phase === 'war' ? 1 : 0)));
 
+    // Eyes first: a recon drone finds islands and the enemy far faster than infantry.
+    const drones = counts.get('recon_drone') ?? 0;
+    const wantDrones = Math.max(1, this.p.drones);
+    let droneQueued = cities.some((c) => c.production?.unit === 'recon_drone' && c.production.progress > 0);
+
     for (const city of cities) {
       if (city.production && city.production.progress > 0) continue; // never waste progress
+      if (!droneQueued && drones < wantDrones && this.unexplored.length > 0 && (counts.get('infantry') ?? 0) >= 2) {
+        droneQueued = true;
+        counts.set('recon_drone', drones + 1);
+        if (city.production?.unit !== 'recon_drone') this.match.setProduction(this.me, city.id, 'recon_drone');
+        continue;
+      }
       // A city with no garrison and enemies nearby builds a defender first.
       const garrisoned = this.world.unitsAt(city.position).some((u) => u.owner === this.me && u.def.domain === 'land');
       let want: UnitTypeId | null = null;

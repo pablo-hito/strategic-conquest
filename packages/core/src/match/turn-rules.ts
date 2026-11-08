@@ -33,21 +33,26 @@ export type TurnEvent =
  *  2. units reset movement and dig in if they stayed put;
  *  3. units resting in an own city (or aircraft on a carrier) repair and refuel.
  */
-export function beginPlayerTurn(world: WorldState, player: PlayerId): TurnEvent[] {
+export function beginPlayerTurn(world: WorldState, player: PlayerId, productionBonus = 0): TurnEvent[] {
   const events: TurnEvent[] = [];
+  // Difficulty handicap: a bonus of 0.25 grants one extra production tick every 4
+  // rounds (deterministic, so replays and saves stay exact).
+  const extraTick = productionBonus > 0 && Math.floor(world.turn * productionBonus) > Math.floor((world.turn - 1) * productionBonus);
 
   for (const city of world.citiesOf(player)) {
-    const produced = city.tickProduction();
-    if (!produced) continue;
-    const unit = world.spawnUnit(produced, player, city.position);
-    events.push({
-      type: 'unit_produced',
-      audience: player,
-      city: city.id,
-      unit: unit.id,
-      unitType: produced,
-      at: city.position,
-    });
+    const produced = [city.tickProduction(), extraTick ? city.tickProduction(false) : null];
+    for (const type of produced) {
+      if (!type) continue;
+      const unit = world.spawnUnit(type, player, city.position);
+      events.push({
+        type: 'unit_produced',
+        audience: player,
+        city: city.id,
+        unit: unit.id,
+        unitType: type,
+        at: city.position,
+      });
+    }
   }
 
   for (const unit of world.unitsOf(player)) {

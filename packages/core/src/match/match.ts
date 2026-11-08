@@ -31,6 +31,8 @@ export interface MatchSnapshot {
   readonly fogs: FogMapSnapshot[];
   /** Combat dice state, so a resumed match rolls exactly as the original would. */
   readonly rng: number[];
+  /** Production handicap per player (difficulty), e.g. { p2: 0.25 }. */
+  readonly productionBonus?: Record<string, number>;
 }
 
 /** Everything a turn change produced, for the server to fan out. */
@@ -55,6 +57,11 @@ export class Match {
   private _status: MatchStatus = 'playing';
   private _winner: PlayerId | null = null;
   readonly fogs = new Map<PlayerId, PlayerFogMap>();
+  /**
+   * Production handicap per player: 0.25 = cities produce 25% faster. Used for the
+   * computer's difficulty level; it never changes what a player can see.
+   */
+  private productionBonus: Record<string, number> = {};
 
   private constructor(
     readonly world: WorldState,
@@ -73,10 +80,12 @@ export class Match {
     order: readonly PlayerId[],
     rules = DEFAULT_VICTORY_RULES,
     seed: string | number = 'match',
+    productionBonus: Readonly<Record<string, number>> = {},
   ): { match: Match; report: TurnReport } {
     const m = new Match(world, order, rules, new Rng(`combat:${seed}`));
+    m.productionBonus = { ...productionBonus };
     for (const p of order) m.fogs.set(p, new PlayerFogMap(p, world.grid.width, world.grid.height));
-    const events = beginPlayerTurn(world, order[0]!);
+    const events = beginPlayerTurn(world, order[0]!, m.bonusOf(order[0]!));
     return { match: m, report: m.report(events, m.refreshAllFog()) };
   }
 
@@ -105,7 +114,7 @@ export class Match {
     if (r.value.captured || r.value.stoppedBy === 'CRASHED') events.push(...this.checkVictory());
     if (this._status === 'playing' && !this.alive.includes(player)) {
       this.advance();
-      events.push(...beginPlayerTurn(this.world, this.activePlayer!));
+      events.push(...beginPlayerTurn(this.world, this.activePlayer!, this.bonusOf(this.activePlayer!)));
     }
     // Eliminations remove units and new turns spawn them: fold that into the deltas.
     const fogUpdates = events.length > 0 ? mergeMaps(new Map(r.value.fogUpdates), this.refreshAllFog()) : r.value.fogUpdates;
@@ -133,7 +142,7 @@ export class Match {
     events.push(...this.checkVictory());
     if (this._status === 'playing' && !this.alive.includes(player)) {
       this.advance();
-      events.push(...beginPlayerTurn(this.world, this.activePlayer!));
+      events.push(...beginPlayerTurn(this.world, this.activePlayer!, this.bonusOf(this.activePlayer!)));
     }
     return ok({ result, events, fogUpdates: this.refreshAllFog() });
   }
@@ -195,7 +204,7 @@ export class Match {
 
     if (this._status === 'playing') {
       this.advance();
-      events.push(...beginPlayerTurn(this.world, this.activePlayer!));
+      events.push(...beginPlayerTurn(this.world, this.activePlayer!, this.bonusOf(this.activePlayer!)));
       fog = mergeMaps(fog, this.refreshAllFog());
     }
     return ok(this.report(events, fog));
@@ -214,6 +223,7 @@ export class Match {
       rules: this.rules,
       fogs: [...this.fogs.values()].map((f) => f.toSnapshot()),
       rng: this.rng.state(),
+      productionBonus: { ...this.productionBonus },
     };
   }
 
@@ -223,11 +233,16 @@ export class Match {
     m.activeIndex = s.activeIndex;
     m._status = s.status;
     m._winner = s.winner;
+    m.productionBonus = { ...(s.productionBonus ?? {}) };
     for (const f of s.fogs) m.fogs.set(f.viewer, PlayerFogMap.fromSnapshot(f));
     return m;
   }
 
   // ─── Internals ──────────────────────────────────────────────────────────────
+
+  bonusOf(player: PlayerId): number {
+    return this.productionBonus[player] ?? 0;
+  }
 
   private checkTurn(player: PlayerId): Result<void, CommandError> {
     if (this._status !== 'playing') return err('MATCH_FINISHED', 'the match is over');

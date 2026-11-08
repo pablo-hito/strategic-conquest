@@ -21,7 +21,7 @@ import { drawUnitIcon } from './icons.js';
 import { SPECIALIZATION_NAME, TERRAIN_NAME, UNIT_CODE, UNIT_NAME } from './labels.js';
 import { FACTION, INK_DARK, NEUTRAL } from './palette.js';
 import { MapRenderer, drawMinimap, type Camera } from './renderer.js';
-import { GameSession, type GameMode, type NewGameOptions, type SavedSession } from './session.js';
+import { GameSession, type Difficulty, type GameMode, type NewGameOptions, type SavedSession } from './session.js';
 
 const SAVE_KEY = 'strategic-conquest:save:v2';
 const SEED_WORDS = ['tidewater', 'basalt', 'meridian', 'coral', 'halcyon', 'riptide', 'atoll', 'monsoon', 'saltmarsh', 'longitude', 'fathom', 'leeward'];
@@ -128,7 +128,7 @@ class App {
   }
 
   private defaultOptions(): NewGameOptions {
-    return { size: 'small', density: 'normal', players: 2, seed: randomSeed(), mode: 'bots' };
+    return { size: 'small', density: 'normal', players: 2, seed: randomSeed(), mode: 'bots', difficulty: 'hard' };
   }
 
   private focusViewer(): void {
@@ -668,9 +668,10 @@ class App {
     const opt = (v: string, label: string, cur?: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
     o.innerHTML = `<form class="sheet" id="setup">
       <h2>Nueva partida</h2>
-      <p class="muted">Cada jugador ve sólo lo que descubrieron sus unidades. Contra la computadora jugás como Jugador 1, y cada bot elige un estilo de juego distinto por partida.</p>
+      <p class="muted">Cada jugador ve sólo lo que descubrieron sus unidades. Contra la computadora jugás como Jugador 1, y cada bot elige un estilo de juego distinto por partida. La dificultad sólo acelera la producción de la computadora: nunca ve más que vos.</p>
       <div class="grid2">
         <label class="field" for="mode">Rivales<select id="mode">${opt('bots', 'Contra la computadora', prev?.mode ?? 'bots')}${opt('hotseat', 'Humanos en esta pantalla', prev?.mode ?? 'bots')}</select></label>
+        <label class="field" for="difficulty">Dificultad<select id="difficulty">${opt('normal', 'Normal · sin ventaja', prev?.difficulty ?? 'hard')}${opt('hard', 'Difícil · +25% producción', prev?.difficulty ?? 'hard')}${opt('brutal', 'Brutal · +50% producción', prev?.difficulty ?? 'hard')}</select></label>
         <label class="field" for="players">Jugadores<select id="players">${[2, 3, 4, 5, 6].map((n) => opt(String(n), `${n} jugadores`, String(prev?.players ?? 2))).join('')}</select></label>
         <label class="field" for="size">Tamaño del mapa<select id="size">${opt('small', 'Small · 60×40', prev?.size)}${opt('medium', 'Medium · 100×64', prev?.size)}${opt('huge', 'Huge · 160×100', prev?.size)}</select></label>
         <label class="field" for="density">Densidad de islas<select id="density">${opt('sparse', 'Escasa · 22% tierra', prev?.density)}${opt('normal', 'Normal · 32% tierra', prev?.density ?? 'normal')}${opt('dense', 'Densa · 42% tierra', prev?.density)}</select></label>
@@ -690,6 +691,7 @@ class App {
         players: Number(v('players')),
         seed: v('seed').trim() || randomSeed(),
         mode: v('mode') as GameMode,
+        difficulty: v('difficulty') as Difficulty,
       });
     });
     o.querySelector('[data-act=cancel]')!.addEventListener('click', () => {

@@ -108,6 +108,22 @@ describe('GameSession (hot-seat)', () => {
     expect(s.visibleLog().every((e) => e.audience === 'all' || e.audience === me)).toBe(true);
   });
 
+  it('never shows the bot its own point of view, during its turn or after it wins', () => {
+    const s = GameSession.create({ ...opts, mode: 'bots', difficulty: 'brutal' });
+    const me = s.viewer;
+    s.endTurn({ runBots: false });
+    expect(s.botToPlay).not.toBeNull();
+    expect(s.viewer).toBe(me);
+    expect(s.view().viewer).toBe(me);
+    while (s.match.status === 'playing' && s.match.round < 200) {
+      while (s.botToPlay) s.playNextBot();
+      s.handOver();
+      if (s.match.status === 'playing') s.endTurn({ runBots: false });
+    }
+    expect(s.viewer).toBe(me);
+    expect(s.visibleLog().every((e) => e.audience === 'all' || e.audience === me)).toBe(true);
+  });
+
   it('restores the game mode from a save', () => {
     const s = GameSession.create({ ...opts, mode: 'bots' });
     const copy = GameSession.restore(JSON.parse(JSON.stringify(s.save())));

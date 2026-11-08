@@ -223,3 +223,28 @@ describe('Match (sequential mode)', () => {
     expect(unwrap(copy.endTurn(P2)).activePlayer).toBe(P1);
   });
 });
+
+describe('difficulty handicap', () => {
+  it('a production bonus of 0.25 gives one extra tick every 4 rounds, and survives a save', () => {
+    const w = new WorldState(Grid.filled(6, 1, 'plains'));
+    w.foundCity('A', { x: 0, y: 0 }).capture(P1);
+    w.foundCity('B', { x: 5, y: 0 }).capture(P2);
+    w.spawnUnit('infantry', P1, { x: 1, y: 0 });
+    w.spawnUnit('infantry', P2, { x: 4, y: 0 });
+    const { match } = Match.start(w, [P1, P2], undefined, 'hc', { [P2]: 0.25 });
+    for (const c of w.allCities()) c.setProduction('heavy_tank'); // 8 turns
+    let restored = Match.fromSnapshot(JSON.parse(JSON.stringify(match.toSnapshot())));
+    expect(restored.bonusOf(P2)).toBe(0.25);
+    expect(restored.bonusOf(P1)).toBe(0);
+    for (let i = 0; i < 16; i++) {
+      restored.endTurn(restored.activePlayer!);
+    }
+    restored = Match.fromSnapshot(JSON.parse(JSON.stringify(restored.toSnapshot())));
+    const tanks = (p: typeof P1) => restored.world.unitsOf(p).filter((u) => u.type === 'heavy_tank').length;
+    // After 8 rounds: P1 built 1 tank (8 ticks); P2 had 8 + 2 bonus ticks = 1 tank and progress 2.
+    expect(tanks(P1)).toBe(1);
+    expect(tanks(P2)).toBe(1);
+    const p2city = restored.world.citiesOf(P2)[0]!;
+    expect(p2city.production?.progress).toBeGreaterThan(restored.world.citiesOf(P1)[0]!.production!.progress);
+  });
+});
