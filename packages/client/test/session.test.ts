@@ -130,6 +130,49 @@ describe('GameSession (hot-seat)', () => {
     expect([...copy.bots]).toEqual([...s.bots]);
   });
 
+  it('moves next to an out-of-range enemy and attacks it in one command', () => {
+    const s = GameSession.create(opts);
+    const [p1, p2] = s.players as [typeof s.viewer, typeof s.viewer];
+    const inf = s.world.unitsOf(p1)[0]!;
+    const { grid } = s.world;
+    // An open land tile exactly 2 steps away, reachable this turn.
+    const reach = s.reachable(inf.id);
+    const spot = [...reach.values()]
+      .map((r) => r.coord)
+      .find((c) => grid.distance(c, inf.position) === 2 && grid.isLand(c) && !s.world.cityAt(c) && s.world.unitsAt(c).length === 0);
+    expect(spot).toBeDefined();
+    const enemy = s.world.spawnUnit('recon', p2, spot!);
+    s.match.fogs.get(p1)!.update(s.world);
+    s.invalidate();
+
+    expect(s.attackTargets(inf.id).has(grid.index(spot!))).toBe(false);
+    expect(s.assaultTargets(inf.id).has(grid.index(spot!))).toBe(true);
+    const plan = s.assaultPlan(inf.id, spot!)!;
+    expect(grid.distance(plan.approach, spot!)).toBe(1);
+    expect(plan.forecast.damageToDefender).toBeGreaterThan(0);
+    // The sandbox didn't touch the real game.
+    expect(s.world.unit(inf.id)!.movesLeft).toBe(2);
+
+    expect(s.assault(inf.id, spot!)).toBeNull();
+    expect(s.world.unit(inf.id)?.position).toEqual(plan.approach);
+    expect(s.lastCombat?.defender).toBe(enemy.id);
+  });
+
+  it('summarizes the rival turn: new contacts come with a place on the map', () => {
+    const s = GameSession.create({ ...opts, mode: 'bots' });
+    const [p1, p2] = s.players as [typeof s.viewer, typeof s.viewer];
+    const cap = s.world.citiesOf(p1)[0]!;
+    s.endTurn({ runBots: false });
+    // Something of the bot's shows up next to our capital during its turn.
+    const spot = s.world.grid.neighbors(cap.position).find((c) => s.world.grid.isLand(c) && !s.world.cityAt(c))!;
+    s.world.spawnUnit('recon', p2, spot);
+    while (s.botToPlay) s.playNextBot();
+    s.handOver();
+    const contact = s.rivalReport.find((e) => e.text.startsWith('Nuevo contacto'));
+    expect(contact?.at).toBeDefined();
+    expect(s.rivalReport.every((e) => e.audience === p1 || e.audience === 'all')).toBe(true);
+  });
+
   it('round-trips through a save', () => {
     const s = GameSession.create(opts);
     for (let i = 0; i < 6; i++) playTurn(s);

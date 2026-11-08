@@ -1,5 +1,6 @@
 import {
   EFFECTIVENESS,
+  armyCap,
   Rng,
   UNIT_TYPES,
   findPath,
@@ -181,6 +182,7 @@ class StrategicTurn {
     for (const u of mine().filter((u) => u.def.domain === 'land' && u.carriedBy !== null)) this.actCargo(u.id);
     for (const u of mine().filter((u) => u.def.domain === 'air')) this.actAircraft(u.id);
 
+    this.makeRoomUnderCap();
     this.mem.idleLast = this.waiting.size;
     this.mem.citiesLast = this.world.citiesOf(this.me).length;
     this.debug?.({
@@ -464,6 +466,26 @@ class StrategicTurn {
         taken.add(u.id);
         this.garrison.add(u.id);
       }
+    }
+  }
+
+  /**
+   * Upkeep: at the army cap nothing gets built, not even the transports idle troops
+   * are waiting for. Disband just enough idle soldiers (cheapest, farthest from the
+   * enemy) to let production resume.
+   */
+  private makeRoomUnderCap(): void {
+    const units = this.world.unitsOf(this.me).length;
+    const cap = armyCap(this.world, this.me);
+    if (units < cap || this.waiting.size === 0) return;
+    const enemyAt = this.enemies.map((e) => e.position).concat(this.knownEnemyCities());
+    const remoteness = (u: Unit) => (enemyAt.length ? Math.min(...enemyAt.map((c) => this.dist(c, u.position))) : 0);
+    const spare = [...this.waiting]
+      .map((id) => this.world.unit(id))
+      .filter((u): u is Unit => !!u && u.carriedBy === null && !this.garrison.has(u.id))
+      .sort((a, b) => UNIT_TYPES[a.type].buildTurns - UNIT_TYPES[b.type].buildTurns || remoteness(b) - remoteness(a));
+    for (const u of spare.slice(0, units - cap + 2)) {
+      if (this.match.disband(this.me, u.id).ok) this.waiting.delete(u.id);
     }
   }
 

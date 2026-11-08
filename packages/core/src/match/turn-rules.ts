@@ -6,6 +6,18 @@ import type { CombatResult } from '../combat/combat-rules.js';
 import type { UnitTypeId } from '../units/unit-types.js';
 import type { WorldState } from '../world/world-state.js';
 
+/**
+ * Upkeep: a player can sustain at most ARMY_BASE + ARMY_PER_CITY × cities units.
+ * At or above it, cities pause production (progress is kept) until losses or new
+ * cities make room. Keeps late-game armies from snowballing into the hundreds.
+ */
+export const ARMY_BASE = 6;
+export const ARMY_PER_CITY = 5;
+
+export function armyCap(world: WorldState, player: PlayerId): number {
+  return ARMY_BASE + ARMY_PER_CITY * world.citiesOf(player).length;
+}
+
 /** HP restored per turn to units resting in an own city. */
 export const CITY_REPAIR_PER_TURN = 2;
 /** HP restored per turn to aircraft parked aboard an own carrier. */
@@ -22,6 +34,8 @@ export type TurnEvent =
   | { type: 'out_of_supply'; audience: PlayerId; unit: UnitId; turns: number }
   /** Sent to both sides of a fight: the defender always learns it was hit and by what. */
   | { type: 'combat'; audience: PlayerId; result: CombatResult }
+  /** Production paused this turn because the army is at its upkeep limit. */
+  | { type: 'army_at_limit'; audience: PlayerId; units: number; cap: number }
   /** Sent to the captor and to the previous owner (an owner always learns it lost a city). */
   | { type: 'city_captured'; audience: PlayerId; city: CityId; by: PlayerId; from: PlayerId | null }
   | { type: 'player_eliminated'; audience: 'all'; player: PlayerId }
@@ -39,7 +53,18 @@ export function beginPlayerTurn(world: WorldState, player: PlayerId, productionB
   // rounds (deterministic, so replays and saves stay exact).
   const extraTick = productionBonus > 0 && Math.floor(world.turn * productionBonus) > Math.floor((world.turn - 1) * productionBonus);
 
+  const units = world.unitsOf(player).length;
+  const cap = armyCap(world, player);
+  const atLimit = units >= cap;
+  if (atLimit && world.citiesOf(player).length > 0) {
+    events.push({ type: 'army_at_limit', audience: player, units, cap });
+  }
+
   for (const city of world.citiesOf(player)) {
+    if (atLimit) {
+      city.tickPortTimer();
+      continue;
+    }
     const produced = [city.tickProduction(), extraTick ? city.tickProduction(false) : null];
     for (const type of produced) {
       if (!type) continue;

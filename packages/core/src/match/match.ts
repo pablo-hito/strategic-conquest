@@ -181,6 +181,23 @@ export class Match {
     return ok(undefined);
   }
 
+  /**
+   * Disband an own unit (it is simply removed). With upkeep in place this is how a
+   * player makes room for something more useful. A loaded carrier can't be disbanded:
+   * unload it first, so nobody drowns their own troops by accident.
+   */
+  disband(player: PlayerId, unitId: UnitId): Result<void, string> {
+    const turn = this.checkTurn(player);
+    if (!turn.ok) return turn;
+    const unit = this.world.unit(unitId);
+    if (!unit) return err('UNKNOWN_UNIT', `no unit ${unitId}`);
+    if (unit.owner !== player) return err('NOT_YOUR_UNIT', 'you can only disband your own units');
+    if (unit.cargo.length > 0) return err('CARRYING_UNITS', 'unload the units aboard first');
+    this.world.removeUnit(unitId);
+    this.refreshAllFog();
+    return ok(undefined);
+  }
+
   /** Toggle silent running; refreshes fog because stealth changes what enemies see. */
   setSilentRunning(player: PlayerId, unitId: UnitId, on: boolean): Result<ReadonlyMap<PlayerId, FogUpdate>, string> {
     const turn = this.checkTurn(player);

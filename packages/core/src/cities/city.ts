@@ -143,6 +143,11 @@ export class City {
     return completed;
   }
 
+  /** A turn without production (army at its upkeep limit): only the port repairs. */
+  tickPortTimer(): void {
+    if (this.s.portDisabledTurns > 0) this.s.portDisabledTurns -= 1;
+  }
+
   /** Ownership change: production restarts from scratch, specialization survives. */
   capture(newOwner: PlayerId): void {
     this.s.owner = newOwner;

@@ -103,6 +103,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .stat .share { grid-column: 1 / -1; height: 3px; margin-top: 4px; background: var(--line); position: relative; }
 .stat .share::after { content: ''; position: absolute; inset: 0 auto 0 0; width: var(--v); background: var(--accent); }
 .stat.pending b { color: var(--amber); }
+.stat.over b { color: var(--bad); }
 .stat.done b { color: var(--good); }
 .chip {
   display: inline-flex;
@@ -222,6 +223,78 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Rival-turn summary (top-left of the map) */
+.report {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  width: min(380px, calc(100% - 80px));
+  max-height: 48%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgba(10, 17, 26, 0.92);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--glow);
+}
+.report header { display: flex; align-items: center; justify-content: space-between; }
+.report h2 { margin: 0; font: 600 var(--step--2)/1 var(--font-display); letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-dim); }
+.report .close { border: 0; background: none; color: var(--fg-dim); font-size: 1.2rem; cursor: pointer; line-height: 1; }
+.report ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; min-height: 0; }
+.report li { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center; font-size: var(--step--1); }
+.report .ic { text-align: center; color: var(--fg-dim); }
+.report li[data-tone='bad'] .ic, .report li[data-tone='bad'] span:nth-child(2) { color: var(--bad); }
+.report li[data-tone='warn'] .ic { color: var(--amber); }
+.report li[data-tone='good'] .ic, .report li[data-tone='good'] span:nth-child(2) { color: var(--good); }
+.report .btn.small { padding: 4px 9px; }
+
+/* First-steps tutorial (bottom-right of the map) */
+.tutorial {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: min(330px, calc(100% - 28px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: rgba(8, 20, 30, 0.94);
+  box-shadow: 0 0 0 1px rgba(63, 200, 255, 0.2), 0 10px 40px rgba(0, 0, 0, 0.5), 0 0 30px rgba(63, 200, 255, 0.15);
+}
+.tutorial header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tutorial small { font: 500 var(--step--2)/1 var(--font-data); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.tutorial .dots { display: flex; gap: 4px; }
+.tutorial .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
+.tutorial .dots i.done { background: var(--accent); }
+.tutorial .dots i.now { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.tutorial h3 { margin: 0; font: 600 var(--step-2)/1.15 var(--font-display); }
+.tutorial p { margin: 0; color: var(--fg-dim); font-size: var(--step-0); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--fg-dim); }
+.btn.danger { border-color: var(--bad); color: var(--bad); }
+.btn.icon.muted { color: var(--fg-faint); text-decoration: line-through; }
+
+/* Quick-start presets in the new-game sheet */
+.presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.preset {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--raised);
+  text-align: left;
+  cursor: pointer;
+}
+.preset b { font: 600 var(--step-0)/1.1 var(--font-display); letter-spacing: 0.04em; }
+.preset small { font-size: var(--step--2); color: var(--fg-dim); }
+.preset:hover, .preset.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 
 /* ── Side rail: fixed, no scroll ─────────────────────────────── */
 .side {
@@ -388,4 +461,6 @@ select option:disabled { color: var(--fg-faint); }
   .log-card { max-height: 40vh; }
   .sheet .grid2 { grid-template-columns: 1fr; }
   .status .hint { display: none; }
+  .presets { grid-template-columns: 1fr; }
+  .tutorial { left: 14px; right: 14px; width: auto; }
 }

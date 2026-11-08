@@ -4,6 +4,7 @@ import {
   Match,
   PlayerId,
   WorldState,
+  armyCap,
   beginPlayerTurn,
   endPlayerTurn,
   suppliedLand,
@@ -246,5 +247,46 @@ describe('difficulty handicap', () => {
     expect(tanks(P2)).toBe(1);
     const p2city = restored.world.citiesOf(P2)[0]!;
     expect(p2city.production?.progress).toBeGreaterThan(restored.world.citiesOf(P1)[0]!.production!.progress);
+  });
+});
+
+describe('upkeep (army cap)', () => {
+  it('pauses production at the cap, keeps progress, and resumes when units are lost', () => {
+    const w = new WorldState(Grid.filled(40, 1, 'plains'));
+    const city = w.foundCity('A', { x: 0, y: 0 });
+    city.capture(P1);
+    city.setProduction('infantry');
+    const cap = armyCap(w, P1); // 6 + 5 × 1 = 11
+    expect(cap).toBe(11);
+    const army = Array.from({ length: cap }, (_, i) => w.spawnUnit('recon', P1, { x: 1 + i, y: 0 }));
+    for (let i = 0; i < 3; i++) beginPlayerTurn(w, P1);
+    const events = beginPlayerTurn(w, P1);
+    expect(events).toContainEqual({ type: 'army_at_limit', audience: P1, units: cap, cap });
+    expect(city.production?.progress).toBe(0); // paused, nothing lost
+
+    w.removeUnit(army[0]!.id);
+    for (let i = 0; i < 3; i++) expect(beginPlayerTurn(w, P1).some((e) => e.type === 'army_at_limit')).toBe(false);
+    const done = beginPlayerTurn(w, P1);
+    expect(done).toMatchObject([{ type: 'unit_produced', unitType: 'infantry' }]);
+  });
+
+  it('disbanding frees room under the cap (but never drowns cargo)', () => {
+    const w = new WorldState(Grid.fromAscii(['....~~']));
+    w.foundCity('A', { x: 0, y: 0 }).capture(P1);
+    w.foundCity('B', { x: 3, y: 0 }).capture(P2);
+    const inf = w.spawnUnit('infantry', P1, { x: 1, y: 0 });
+    const tr = w.spawnUnit('transport', P1, { x: 4, y: 0 });
+    w.load(tr.id, w.spawnUnit('infantry', P1, { x: 4, y: 0 }).id);
+    const { match } = Match.start(w, [P1, P2]);
+    expect(match.disband(P1, tr.id)).toMatchObject({ ok: false, error: { code: 'CARRYING_UNITS' } });
+    expect(match.disband(P2, inf.id)).toMatchObject({ ok: false });
+    expect(match.disband(P1, inf.id).ok).toBe(true);
+    expect(w.unit(inf.id)).toBeUndefined();
+  });
+
+  it('more cities sustain a bigger army', () => {
+    const w = new WorldState(Grid.filled(10, 1, 'plains'));
+    for (let x = 0; x < 4; x++) w.foundCity(`C${x}`, { x: x * 2, y: 0 }).capture(P1);
+    expect(armyCap(w, P1)).toBe(6 + 5 * 4);
   });
 });

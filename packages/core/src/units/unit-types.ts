@@ -100,7 +100,7 @@ export const UNIT_TYPES: Readonly<Record<UnitTypeId, UnitTypeDef>> = {
   },
   infantry: {
     id: 'infantry', name: 'Infantry', domain: 'land', movementClass: 'foot',
-    moves: 2, vision: 2, eyeHeight: LAND_EYE, maxHp: 10, size: 1, attack: 2, defense: 2,
+    moves: 2, vision: 2, eyeHeight: LAND_EYE, maxHp: 10, size: 1, attack: 2, defense: 3,
     targetClass: 'soft', buildTurns: 4, canCaptureCities: true, canEntrench: true,
   },
   mech_infantry: {

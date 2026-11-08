@@ -36,6 +36,8 @@ export interface Overlay {
   readonly selectedTile?: Coord | undefined;
   readonly reach?: ReadonlyMap<TileIndex, ReachableTile> | undefined;
   readonly targets?: ReadonlySet<TileIndex> | undefined;
+  /** Enemies reachable to attack after moving this turn (dashed reticle). */
+  readonly assaults?: ReadonlySet<TileIndex> | undefined;
   readonly path?: readonly PathStep[] | undefined;
   readonly hover?: Coord | undefined;
 }
@@ -268,12 +270,15 @@ export class MapRenderer {
       if (cityOwner.has(i)) this.drawCityFrame(sx(x), sy(y), z, cityOwner.get(i)!);
     }
 
-    // 6. Attack targets: pulsing red reticles.
-    if (overlay.targets) {
+    // 6. Attack targets: pulsing red reticles (solid: in range now; dashed: move first).
+    for (const [set, dashed] of [[overlay.targets, false], [overlay.assaults, true]] as const) {
+      if (!set) continue;
       const pulse = (Math.sin(time / 180) + 1) / 2;
       ctx.strokeStyle = TARGET;
       ctx.lineWidth = 2;
-      for (const i of overlay.targets) {
+      ctx.globalAlpha = dashed ? 0.75 : 1;
+      ctx.setLineDash(dashed ? [z * 0.12, z * 0.1] : []);
+      for (const i of set) {
         const x = i % view.width, y = Math.floor(i / view.width);
         if (!inView(x, y)) continue;
         const cx = sx(x) + z / 2, cy = sy(y) + z / 2;
@@ -286,6 +291,8 @@ export class MapRenderer {
         }
         ctx.stroke();
       }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
     }
 
     // 7. Planned path

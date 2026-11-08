@@ -1,6 +1,7 @@
 import {
   Match,
   PlayerId,
+  WorldState,
   buildPlayerView,
   findPath,
   forecastAttack,
@@ -18,6 +19,7 @@ import {
   type MatchSnapshot,
   type MoveOutcome,
   type PlannedPath,
+  type PathStep,
   type PlayerView,
   type ReachableTile,
   type TileIndex,
@@ -28,6 +30,15 @@ import {
 } from '@sc/core';
 import { botPersonality, playBotTurn } from '@sc/ai';
 import { STOP_TEXT, UNIT_NAME, playerName } from './labels.js';
+
+export interface AssaultPlan {
+  /** Tile to attack from. */
+  readonly approach: Coord;
+  readonly path: readonly PathStep[];
+  /** Expected outcome from that tile. */
+  readonly forecast: Forecast;
+  readonly score: number;
+}
 
 /** 'bots': player 1 is you, everyone else is the computer. 'hotseat': all humans. */
 export type GameMode = 'bots' | 'hotseat';
@@ -52,6 +63,8 @@ export interface LogEntry {
   readonly audience: PlayerId | 'all';
   readonly text: string;
   readonly tone: Tone;
+  /** Where it happened, when it has a place on the map ("Ver" button). */
+  readonly at?: Coord;
 }
 
 export interface SavedSession {
@@ -198,6 +211,92 @@ export class GameSession {
     return out;
   }
 
+  /**
+   * Enemies the unit can't hit from where it stands but can reach and hit this turn
+   * (move next to them, then attack). Cheap check: no forecast.
+   */
+  assaultTargets(id: UnitId): Set<TileIndex> {
+    const out = new Set<TileIndex>();
+    const unit = this.ownUnit(id);
+    if (!unit || unit.def.attack <= 0 || unit.attackedThisTurn || unit.def.indirectFire) return out;
+    const direct = this.attackTargets(id);
+    const reach = this.reachable(id);
+    const { grid } = this.world;
+    const fog = this.match.fogs.get(this.viewer)!;
+    const range = unit.def.attackRange ?? { min: 1, max: 1 };
+    for (const e of this.view().foreignUnits) {
+      const i = grid.index(e.position);
+      if (direct.has(i)) continue;
+      if (grid.distance(unit.position, e.position) > unit.movesLeft + range.max) continue;
+      const canStand = [...reach.values()].some((r) => {
+        const d = grid.distance(r.coord, e.position);
+        return r.movesLeft >= 1 && (r.kind === 'move' || r.kind === 'disembark') && d >= range.min && d <= range.max &&
+          fog.isExplored(grid.index(r.coord));
+      });
+      if (canStand) out.add(i);
+    }
+    return out;
+  }
+
+  private assaultCache = new Map<string, AssaultPlan | null>();
+
+  /**
+   * Best way to move-and-attack `target` this turn: every tile in range that the unit
+   * can reach with movement to spare is tried on a copy of the world (so the real game
+   * is untouched), and the one with the best expected exchange wins.
+   */
+  assaultPlan(id: UnitId, target: Coord): AssaultPlan | null {
+    const unit = this.ownUnit(id);
+    if (!unit) return null;
+    const key = `${id}:${unit.position.x},${unit.position.y}:${unit.movesLeft}:${target.x},${target.y}:${this.match.round}:${this.log.length}`;
+    if (this.assaultCache.has(key)) return this.assaultCache.get(key)!;
+    const { grid } = this.world;
+    const range = unit.def.attackRange ?? { min: 1, max: 1 };
+    // Only spots (and routes) over known terrain: through the fog the planner assumes
+    // the cheapest ground, and a hill revealed on the way would leave no MP to attack.
+    const fogMap = this.match.fogs.get(this.viewer)!;
+    const known = (c: Coord) => fogMap.isExplored(grid.index(c));
+    const spots = [...this.reachable(id).values()].filter((r) => {
+      const d = grid.distance(r.coord, target);
+      return r.movesLeft >= 1 && (r.kind === 'move' || r.kind === 'disembark') && d >= range.min && d <= range.max && known(r.coord);
+    });
+    let best: AssaultPlan | null = null;
+    if (spots.length > 0) {
+      const sandbox = WorldState.fromSnapshot(this.world.toSnapshot());
+      const ghost = sandbox.unit(id)!;
+      const fog = this.match.fogs.get(this.viewer)!;
+      for (const spot of spots) {
+        if (ghost.carriedBy) sandbox.unload(ghost.carriedBy, id);
+        sandbox.stepUnit(id, spot.coord, 0); // teleport: only the position matters here
+        const p = planAttack(sandbox, fog, this.viewer, id, target);
+        if (!p.ok) continue;
+        const f = forecastAttack(sandbox, p.value);
+        const score = f.damageToDefender - f.damageToAttacker - f.interceptionDamage;
+        const path = this.plan(id, spot.coord);
+        if (!path || !path.steps.every((st) => known(st.coord))) continue;
+        const better = !best || score > best.score + 0.01 || (Math.abs(score - best.score) <= 0.01 && path.steps.length < best.path.length);
+        if (better) best = { approach: spot.coord, path: path.steps, forecast: f, score };
+      }
+    }
+    this.assaultCache.set(key, best);
+    if (this.assaultCache.size > 200) this.assaultCache.clear();
+    return best;
+  }
+
+  /** Move to the best spot and attack, as one command. */
+  assault(id: UnitId, target: Coord): string | null {
+    const plan = this.assaultPlan(id, target);
+    if (!plan) return 'No hay forma de atacar ese objetivo este turno.';
+    const moved = this.moveTo(id, plan.approach);
+    if (moved) return moved;
+    const u = this.ownUnit(id);
+    if (!u) return null; // lost on the way (it is in the log)
+    if (u.position.x !== plan.approach.x || u.position.y !== plan.approach.y) {
+      return 'El avance se detuvo antes de llegar: no hubo ataque.';
+    }
+    return this.attack(id, target);
+  }
+
   /** Expected outcome of attacking `target`, or null if the attack isn't possible. */
   forecast(id: UnitId, target: Coord): Forecast | null {
     const fog = this.match.fogs.get(this.viewer)!;
@@ -291,6 +390,16 @@ export class GameSession {
     return r.ok ? null : r.error.message;
   }
 
+  disband(id: UnitId): string | null {
+    const unit = this.ownUnit(id);
+    const r = this.match.disband(this.viewer, id);
+    this.invalidate();
+    if (!r.ok) return r.error.code === 'CARRYING_UNITS' ? 'Primero desembarcá las unidades que lleva a bordo.' : r.error.message;
+    this.orders.delete(id);
+    if (unit) this.push(this.viewer, `Disolviste ${UNIT_NAME[unit.type]}.`, 'info');
+    return null;
+  }
+
   skip(id: UnitId): void {
     this.skipped.add(id);
   }
@@ -310,6 +419,7 @@ export class GameSession {
     this.skipped.clear();
     this.pushEvents(r.value.events);
     this.invalidate();
+    if (this.bots.size > 0) this.openRivalReport();
     if (opts.runBots === false) return;
     while (this.botToPlay) this.playNextBot();
     this.handOver();
@@ -337,6 +447,41 @@ export class GameSession {
     else this.beginTurn();
   }
 
+  /** What happened to you while the computer played (built when its turns end). */
+  rivalReport: LogEntry[] = [];
+  private reportFrom = 0;
+  private knownBefore = new Set<string>();
+
+  /** Called when the human ends a turn against the computer: start collecting. */
+  private openRivalReport(): void {
+    this.reportFrom = this.log.length;
+    this.knownBefore = new Set(this.view().foreignUnits.map((u) => u.id));
+  }
+
+  /** Called when the human's next turn starts: keep what concerns them, plus new contacts. */
+  private closeRivalReport(): void {
+    const me = this.viewer;
+    const items = this.log
+      .slice(this.reportFrom)
+      .filter((e) => (e.audience === me || e.audience === 'all') && (e.at || e.tone !== 'info'));
+    const produced = this.log.slice(this.reportFrom).filter((e) => e.audience === me && / completó /.test(e.text)).length;
+    this.invalidate();
+    const contacts = this.view().foreignUnits.filter((u) => !this.knownBefore.has(u.id));
+    const byType = new Map<UnitTypeId, typeof contacts>();
+    for (const u of contacts) byType.set(u.type, [...(byType.get(u.type) ?? []), u]);
+    for (const [type, list] of byType) {
+      items.push({
+        round: this.match.round,
+        audience: me,
+        text: `Nuevo contacto: ${list.length > 1 ? `${list.length} × ` : ''}${UNIT_NAME[type]} de ${this.nameOf(list[0]!.owner)}.`,
+        tone: 'warn',
+        at: list[0]!.position,
+      });
+    }
+    if (produced > 0) items.push({ round: this.match.round, audience: me, text: `Tus ciudades completaron ${produced} unidad${produced === 1 ? '' : 'es'}.`, tone: 'info' });
+    this.rivalReport = items;
+  }
+
   /** How the computer played, revealed at the end of the game. */
   botStyle(p: PlayerId): string {
     return botPersonality(this.match, p).label;
@@ -345,6 +490,7 @@ export class GameSession {
   /** The next player took the seat: resume their standing orders. */
   beginTurn(): void {
     this.awaitingHandoff = false;
+    if (this.bots.size > 0) this.closeRivalReport();
     for (const [id, goal] of [...this.orders]) {
       const unit = this.world.unit(id);
       if (!unit) {
@@ -364,8 +510,8 @@ export class GameSession {
     return this.log.filter((e) => e.audience === 'all' || e.audience === this.viewer);
   }
 
-  private push(audience: PlayerId | 'all', text: string, tone: Tone): void {
-    this.log.push({ round: this.match.round, audience, text, tone });
+  private push(audience: PlayerId | 'all', text: string, tone: Tone, at?: Coord): void {
+    this.log.push({ round: this.match.round, audience, text, tone, ...(at ? { at: { ...at } } : {}) });
   }
 
   private unitLabel(type: UnitTypeId, id: UnitId): string {
@@ -383,10 +529,10 @@ export class GameSession {
         : `${att} bombardeó la ciudad.`;
       if (r.cityBombed && def) text += ' La ciudad quedó bombardeada.';
       if (r.attackerDestroyed) text += ` Perdiste tu ${att}.`;
-      this.push(audience, text + flak, r.attackerDestroyed ? 'bad' : r.defenderDestroyed ? 'good' : 'info');
+      this.push(audience, text + flak, r.attackerDestroyed ? 'bad' : r.defenderDestroyed ? 'good' : 'info', r.target);
     } else {
       const text = `${att} enemigo atacó tu ${def}: −${r.damageToDefender}${r.defenderDestroyed ? ' (destruido)' : ''}${r.attackerDestroyed ? `. El atacante fue destruido` : ''}.`;
-      this.push(audience, text, r.defenderDestroyed ? 'bad' : 'warn');
+      this.push(audience, text, r.defenderDestroyed ? 'bad' : 'warn', r.target);
     }
   }
 
@@ -428,11 +574,14 @@ export class GameSession {
         case 'out_of_supply':
           this.push(e.audience, `Una unidad está sin suministro (${e.turns} turno${e.turns === 1 ? '' : 's'}).`, 'warn');
           break;
+        case 'army_at_limit':
+          this.push(e.audience, `Ejército al límite (${e.units}/${e.cap}): las ciudades no producen hasta que haya lugar. Más ciudades sostienen más unidades.`, 'warn');
+          break;
         case 'city_captured': {
           const city = this.world.city(e.city);
           const name = city?.name ?? 'una ciudad';
-          if (e.audience === e.by) this.push(e.audience, `Capturaste ${name}.`, 'good');
-          else this.push(e.audience, `${this.nameOf(e.by)} te capturó ${name}.`, 'bad');
+          if (e.audience === e.by) this.push(e.audience, `Capturaste ${name}.`, 'good', city?.position);
+          else this.push(e.audience, `${this.nameOf(e.by)} te capturó ${name}.`, 'bad', city?.position);
           break;
         }
         case 'combat':

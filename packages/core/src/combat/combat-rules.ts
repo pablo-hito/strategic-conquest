@@ -19,7 +19,7 @@ const row = (soft: number, armored: number, air: number, naval_light: number, na
 export const EFFECTIVENESS: Readonly<Record<UnitTypeId, Row>> = {
   //                          soft armor  air  nLight nHeavy  sub
   recon:            row(0.8, 0.3, 0,   0,   0,   0),
-  infantry:         row(1.0, 0.5, 0,   0,   0,   0),
+  infantry:         row(1.0, 0.7, 0,   0,   0,   0),
   mech_infantry:    row(1.1, 0.8, 0.2, 0,   0,   0),
   heavy_tank:       row(1.2, 1.2, 0,   0.3, 0.2, 0),
   artillery:        row(1.3, 1.0, 0,   0.8, 0.6, 0),
@@ -52,8 +52,10 @@ const damage = (base: number, attack: number, defense: number) =>
   attack <= 0 ? 0 : base * Math.pow(attack / defense, RATIO_EXPONENT);
 /** Random spread applied to every damage roll (±15%). */
 export const DAMAGE_SPREAD = 0.15;
-/** Land units fighting from one of their own cities. */
+/** Land units fighting from one of their own cities (vehicles / foot soldiers). */
 export const CITY_DEFENSE_BONUS = 0.25;
+/** Infantry holding a city fights street by street. */
+export const CITY_DEFENSE_BONUS_FOOT = 0.5;
 /** Attacking straight off a transport (amphibious assault). */
 export const AMPHIBIOUS_PENALTY = 0.25;
 
@@ -97,7 +99,9 @@ function defenseStrength(world: WorldState, u: Unit): number {
   let m = u.defenseModifier;
   if (def.domain === 'land' && u.carriedBy === null) {
     m += world.grid.defAt(u.position).defenseBonus[def.movementClass] ?? 0;
-    if (world.cityAt(u.position)?.owner === u.owner) m += CITY_DEFENSE_BONUS;
+    if (world.cityAt(u.position)?.owner === u.owner) {
+      m += def.movementClass === 'foot' ? CITY_DEFENSE_BONUS_FOOT : CITY_DEFENSE_BONUS;
+    }
   }
   return Math.max(0.5, def.defense) * m * healthFactor(u);
 }

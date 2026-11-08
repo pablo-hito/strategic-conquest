@@ -103,6 +103,8 @@ Sólo el primer paso puede rechazar el comando entero; a partir de ahí la unida
 2. Sus unidades recuperan MP y, si no se movieron, suben un nivel de atrincheramiento.
 3. Reparación y combustible: en ciudad propia +2 HP y tanque lleno; aviones dentro de un portaaviones +1 HP y tanque lleno.
 
+**Mantenimiento (límite de ejército).** Cada jugador sostiene a lo sumo `6 + 5 × ciudades` unidades (`armyCap`). En ese límite, al inicio de su turno sus ciudades no producen (el progreso se conserva) y recibe el evento `army_at_limit`. Más ciudades sostienen más unidades; perder unidades o **disolverlas** (`Match.disband`, que no permite disolver un transporte cargado) libera lugar. Así los ejércitos no crecen sin fin a mitad de partida.
+
 **Fin del turno (`endPlayerTurn`):**
 1. Los aviones sobre un portaaviones propio con lugar aterrizan en él (pasan a ser carga) y repostan.
 2. Los aviones que quedan en el aire gastan los MP que no usaron ("loiter"): así un caza con 20 de combustible y 10 MP aguanta dos turnos fuera de base. Con 0 combustible y lejos de una base, se estrellan.
@@ -144,7 +146,7 @@ Medido sobre 15 semillas por combinación (3 tamaños × 3 densidades × 2/4/6 j
 
 **Fórmula.**
 - Fuerza de ataque = ataque × efectividad × salud (50% + 50% × vida restante), −25% si ataca desde un transporte (asalto anfibio).
-- Fuerza de defensa = defensa × (1 + terreno + atrincheramiento + 25% en ciudad propia − 25% sin suministro) × salud.
+- Fuerza de defensa = defensa × (1 + terreno + atrincheramiento + bonus de ciudad propia − 25% sin suministro) × salud. El bonus de ciudad es +50% para la infantería (pelea calle por calle) y +25% para vehículos.
 - Daño = 4 × (ataque / defensa)^0,6, con ±15% de azar. El exponente hace que el doble de fuerza sea 1,5× el daño: el superior gana claro sin destruir todo de un golpe.
 
 **Secuencia.**
@@ -158,7 +160,7 @@ Medido sobre 15 semillas por combinación (3 tamaños × 3 densidades × 2/4/6 j
 
 **Pronóstico (`forecastAttack`).** Calcula el daño esperado sin tirar dados; el visor lo muestra al pasar el cursor sobre un objetivo. Ambos bandos reciben un evento `combat`.
 
-Valores de referencia (unidades sanas, en llanura): infantería vs infantería −4 / contraataque −3,5; tanque vs infantería −8,6 / −1,2; tanque vs tanque −5,7 / −4,8; submarino vs portaaviones −9,7 de 16; antiaéreo vs CAS −6,1 de 8.
+Valores de referencia (unidades sanas): tanque vs infantería en llanura −6,8 / contraataque −1,7; en su ciudad −5,3; en su ciudad y atrincherada −4,3; infantería vs tanque −2,1 / −6,4; infantería vs infantería −3,1 / −2,8; tanque vs tanque en ciudad −5,0 / −5,0; submarino vs portaaviones −9,7 de 16. (La infantería tiene defensa 3 y efectividad 0,7 contra blindados.)
 
 ## 3h. Bots (`packages/ai`)
 
@@ -199,6 +201,12 @@ Vite + TypeScript + Canvas 2D, sin framework. Juega partidas locales (contra la 
 - `renderer.ts`: terreno pintado en bloques de 16×16 casillas y cacheado (costas redondeadas con espuma y playa, pasto, bosques, colinas sombreadas, montañas con nieve), pintado sólo con lo explorado; niebla con bordes suaves (una máscara de 1 píxel por casilla escalada con suavizado); ciudades con edificios y ventanas; fichas con siluetas por tipo de unidad sobre el color de la facción (cuadrado = tierra, casco = mar, círculo = aire); unidad activa con halo, anillo giratorio y flecha; punto verde en las unidades que todavía pueden moverse y atenuadas las que ya movieron; animación de movimiento y explosiones con el número de daño; minimapa.
 - `icons.ts`: siluetas vectoriales de las 18 unidades.
 - `main.ts`: barra superior (ronda, ciudades, unidades por mover, Siguiente, Fin de turno), panel derecho fijo **sin scroll** (selección, plano estratégico y registro táctico que ocupa el resto), ayuda con "?", nueva partida (rivales, dificultad, jugadores, tamaño, densidad, semilla), mouse, teclado y gestos táctiles. Autoguardado en `localStorage`.
+- **Mover y atacar en un clic**: los enemigos alcanzables este turno moviéndose antes tienen mira punteada. La sesión prueba cada casilla desde donde se los puede atacar sobre una **copia** del mundo (el juego real no cambia) y elige la de mejor intercambio esperado; al pasar el cursor se ve la ruta y el pronóstico desde esa casilla. Sólo considera casillas y rutas sobre terreno ya explorado: a través de la niebla el planificador supone el terreno más barato, y una colina descubierta en el camino dejaría a la unidad sin movimiento para atacar.
+- **Resumen del turno rival**: al volver tu turno, una tarjeta con lo que te pasó (ataques, ciudades perdidas o tomadas, contactos nuevos y producción), cada cosa con un botón "Ver" que centra el mapa.
+- `tutorial.ts`: "Primeros pasos" en seis pasos que avanzan cuando hacés lo que piden (elegir, mover, producir, capturar, terminar el turno, atacar). Aparece en la primera partida; se reabre desde "?".
+- `sound.ts`: efectos sintetizados con Web Audio, sin archivos (selección, movimiento, disparo, explosión, captura, turno, alarma, error), con botón para silenciar.
+- Partidas rápidas en la pantalla de nueva partida: Duelo (1 contra 1, chico), Todos contra mí (1 contra 3 bots, mediano) y Caos (1 contra 5, grande). Los bots también pelean entre sí.
+- Barra superior con el ejército contra su límite ("Ejército 34/41"), en rojo al llegar; botón "Disolver" (con confirmación) en el panel de la unidad.
 - `scripts/build-standalone.mjs`: empaqueta todo en un único HTML.
 
 ## 4. Valores iniciales de balance (tunables)
@@ -232,7 +240,7 @@ Especializaciones: *Industrial Hub* (−25% turnos para blindados/artillería/AA
 
 ## 4b. Mediciones del bot
 
-**Arena** (`ARENA=1 npx vitest run bench/arena.test.ts` en `packages/ai`): partidas completas entre el bot estratégico y el anterior, mapa chico, 20 mapas, alternando quién empieza, hasta la ronda 200, dificultad Normal. Resultado final: **13 victorias, 1 derrota y 6 empates**; terminó adelante en ciudades en 18 de las 20 partidas.
+**Arena** (`ARENA=1 npx vitest run bench/arena.test.ts` en `packages/ai`): partidas completas entre el bot estratégico y el anterior, mapa chico, 20 mapas, alternando quién empieza, hasta la ronda 200, dificultad Normal. Resultado final: **15 victorias, 2 derrotas y 3 empates** (adelante en 2 de los empates).
 
 Cómo llegó ahí (cada fila es una corrección medida con la arena):
 
@@ -245,9 +253,11 @@ Cómo llegó ahí (cada fila es una corrección medida con la arena):
 | Tanques sólo con infantería a bordo; objetivo reevaluado cada turno | 3 de 6 | |
 | Estilo por personalidad: incursiones continuas o golpe masivo | 8 de 10 | la espera para concentrar fuerzas costaba más ritmo del que ganaba |
 | Mismo código en 20 mapas | 12 de 20 | |
-| Dron temprano y "mapa sin explorar = espacio para expandirse" | **13 de 20** | en un mapa no descubría ninguna ciudad hasta la ronda 35 |
+| Dron temprano y "mapa sin explorar = espacio para expandirse" | 13 de 20 | en un mapa no descubría ninguna ciudad hasta la ronda 35 |
+| Límite de ejército e infantería más fuerte en ciudades | 11 de 20 | en una partida se congeló 150 rondas: al límite no podía fabricar los transportes que necesitaba |
+| El bot disuelve tropa ociosa cuando está al límite | **15 de 20** | 2 derrotas y 3 empates (adelante en 2); turno más lento 0,64 s |
 
-**Partidas completas a través del visor** (`FULLGAME=1 npx vitest run bench/fullgame.test.ts` en `packages/client`): la sesión del visor con mi asiento jugado por una estrategia guionada agresiva (la del bot anterior) contra el bot real. En Normal: 1 victoria del bot, 1 derrota y 2 partidas parejas. En **Difícil: el bot ganó las 4** (rondas 66 a 152).
+**Partidas completas a través del visor** (`FULLGAME=1 npx vitest run bench/fullgame.test.ts` en `packages/client`): la sesión del visor con mi asiento jugado por una estrategia guionada agresiva (la del bot anterior) contra el bot real. Con las reglas actuales (límite de ejército, infantería reforzada): en **Normal** el bot ganó 1 de 4 (el guion ganó 2 y la cuarta quedó a su favor): partida pareja. En **Difícil** el bot ganó 3 de 4 (rondas 63 a 123).
 
 **Rendimiento**: 125 ms por ronda de promedio en el navegador (turno del bot incluido) en mapa chico; el turno más lento medido en partidas largas, 1,3 s.
 

@@ -96,8 +96,22 @@ describe('forecast and resolution', () => {
     for (let i = 0; i < 3; i++) dug.startTurn();
     const vsOpen = forecast(w, tank.id, open.position).damageToDefender;
     const vsDug = forecast(w, tank.id, dug.position).damageToDefender;
-    expect(vsOpen).toBeGreaterThan(8); // nearly wiped out
+    expect(vsOpen).toBeGreaterThan(6); // badly mauled
     expect(vsDug).toBeLessThan(vsOpen * 0.75);
+  });
+
+  it('infantry holds cities better than vehicles do', () => {
+    const w = new WorldState(Grid.filled(6, 1, 'plains'));
+    w.foundCity('Hold', { x: 2, y: 0 }).capture(P2);
+    const tank = w.spawnUnit('heavy_tank', P1, { x: 1, y: 0 });
+    const open = new WorldState(Grid.filled(6, 1, 'plains'));
+    const tank2 = open.spawnUnit('heavy_tank', P1, { x: 1, y: 0 });
+    w.spawnUnit('infantry', P2, { x: 2, y: 0 });
+    open.spawnUnit('infantry', P2, { x: 2, y: 0 });
+    const inCity = forecast(w, tank.id, { x: 2, y: 0 }).damageToDefender;
+    const inOpen = forecast(open, tank2.id, { x: 2, y: 0 }).damageToDefender;
+    // +50% defense in an own city -> 1.5^-0.6 ≈ 0.78 of the damage
+    expect(inCity / inOpen).toBeCloseTo(1.5 ** -0.6, 2);
   });
 
   it('counter-fire hurts melee attackers, not artillery firing from range', () => {

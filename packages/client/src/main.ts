@@ -1,5 +1,6 @@
 import {
   CITY_SPECIALIZATIONS,
+  armyCap,
   TERRAINS,
   UNIT_TYPES,
   UNIT_TYPE_IDS,
@@ -21,6 +22,8 @@ import { drawUnitIcon } from './icons.js';
 import { SPECIALIZATION_NAME, TERRAIN_NAME, UNIT_CODE, UNIT_NAME } from './labels.js';
 import { FACTION, INK_DARK, NEUTRAL } from './palette.js';
 import { MapRenderer, drawMinimap, type Camera } from './renderer.js';
+import { SoundBoard } from './sound.js';
+import { Tutorial } from './tutorial.js';
 import { GameSession, type Difficulty, type GameMode, type NewGameOptions, type SavedSession } from './session.js';
 
 const SAVE_KEY = 'strategic-conquest:save:v2';
@@ -61,6 +64,7 @@ class App {
   private hover: Coord | undefined;
   private reach: Map<TileIndex, ReachableTile> | undefined;
   private targets: Set<TileIndex> | undefined;
+  private assaults: Set<TileIndex> | undefined;
   private path: PlannedPath | null = null;
   private pathKey = '';
   private readonly cameras = new Map<PlayerId, Camera>();
@@ -68,6 +72,8 @@ class App {
   private toastTimer = 0;
   /** True while the computer players are taking their turns (input is paused). */
   private botsPlaying = false;
+  private readonly sound = new SoundBoard();
+  private tutorial!: Tutorial;
 
   private readonly root = el('div', { class: 'app' });
   private readonly bar = el('header', { class: 'bar' });
@@ -76,6 +82,7 @@ class App {
   private readonly status = el('div', { class: 'status', 'aria-live': 'polite' });
   private readonly toastEl = el('div', { class: 'toast', role: 'status' });
   private readonly botBanner = el('div', { class: 'bot-banner', role: 'status' });
+  private readonly report = el('section', { class: 'report', 'aria-label': 'Resumen del turno rival' });
   private readonly side = el('aside', { class: 'side' });
   private readonly selPanel = el('section', { class: 'card selection', id: 'selection' });
   private readonly mapPanel = el('section', { class: 'card minimap-card' });
@@ -87,13 +94,15 @@ class App {
   constructor() {
     this.toastEl.hidden = true;
     this.botBanner.hidden = true;
+    this.report.hidden = true;
     this.overlay.hidden = true;
-    this.stage.append(this.canvas, this.status, this.toastEl, this.botBanner, this.zoomButtons());
+    this.stage.append(this.canvas, this.status, this.toastEl, this.botBanner, this.report, this.zoomButtons());
     this.mapPanel.append(el('h2', {}, 'Plano estratégico'), this.minimap);
     this.side.append(this.selPanel, this.mapPanel, this.logPanel);
     this.root.append(this.bar, this.stage, this.side);
     document.body.append(this.root, this.overlay);
     this.renderer = new MapRenderer(this.canvas, (p) => this.factionOf(p));
+    this.tutorial = new Tutorial(this.stage);
     this.bindInput();
     new ResizeObserver(() => {
       this.renderer.resize();
@@ -181,6 +190,7 @@ class App {
     const u = this.selectedUnit();
     this.reach = u ? this.session.reachable(u.id) : undefined;
     this.targets = u ? this.session.attackTargets(u.id) : undefined;
+    this.assaults = u ? this.session.assaultTargets(u.id) : undefined;
   }
 
   private select(sel: Selection, center = false): void {
@@ -215,6 +225,7 @@ class App {
     if (this.botsPlaying || !s.world.grid.inBounds(t) || s.match.status !== 'playing') return;
     const unit = this.selectedUnit();
     if (unit && this.targets?.has(s.world.grid.index(t))) return this.attack(unit, t);
+    if (unit && this.assaults?.has(s.world.grid.index(t))) return this.assault(unit, t);
     if (unit && !sameCoord(unit.position, t)) {
       const plan = s.plan(unit.id, t);
       if (plan && plan.steps.length > 0) return this.move(unit, t, plan);
@@ -225,10 +236,19 @@ class App {
     const ownCity = city?.owner === s.viewer ? city : undefined;
     if (own.length > 0) {
       const cur = this.sel?.kind === 'unit' ? own.findIndex((u) => u.id === (this.sel as { id: UnitId }).id) : -1;
-      if (cur === own.length - 1 && ownCity) return this.select({ kind: 'city', id: ownCity.id });
+      if (cur === own.length - 1 && ownCity) {
+        this.tutorial.done('city');
+        return this.select({ kind: 'city', id: ownCity.id });
+      }
+      this.sound.play('select');
+      this.tutorial.done('select');
       return this.select({ kind: 'unit', id: own[(cur + 1) % own.length]!.id });
     }
-    if (ownCity) return this.select({ kind: 'city', id: ownCity.id });
+    if (ownCity) {
+      this.sound.play('select');
+      this.tutorial.done('city');
+      return this.select({ kind: 'city', id: ownCity.id });
+    }
     if (unit && this.hasForeignUnit(t)) {
       this.toast(
         unit.attackedThisTurn ? 'Esta unidad ya atacó este turno.'
@@ -241,8 +261,12 @@ class App {
 
   private move(unit: Unit, goal: Coord, plan: PlannedPath): void {
     const from = { ...unit.position };
+    const logBefore = this.session.log.length;
     const msg = this.session.moveTo(unit.id, goal);
-    if (msg) this.toast(msg);
+    if (msg) this.toast(msg, true);
+    else this.sound.play('move');
+    this.celebrateCaptures(logBefore);
+    this.tutorial.done('move');
     const after = this.session.world.unit(unit.id);
     if (after) {
       // Animate along the part of the plan actually travelled.
@@ -250,22 +274,60 @@ class App {
       const stop = steps.findIndex((c) => sameCoord(c, after.position));
       if (stop >= 0) this.renderer.animateMove(unit.id, unit.type, unit.owner, from, steps.slice(0, stop + 1), performance.now());
     }
-    this.afterAction(unit.id);
+    this.afterAction(unit.id, !!msg);
   }
 
   private attack(unit: Unit, target: Coord): void {
     const at = { ...unit.position };
     const msg = this.session.attack(unit.id, target);
-    if (msg) this.toast(msg);
+    if (msg) this.toast(msg, true);
     const r = this.session.lastCombat;
     if (!msg && r) {
+      this.sound.play('attack');
+      if (r.defenderDestroyed || r.attackerDestroyed) this.sound.play('explosion', 120);
+      this.tutorial.done('attack');
       const now = performance.now();
       this.renderer.blast(target, r.defenderDestroyed ? 'DESTRUIDO' : `−${r.damageToDefender}`, r.defenderDestroyed, now);
       if (r.damageToAttacker > 0 || r.attackerDestroyed) {
         this.renderer.blast(at, r.attackerDestroyed ? 'PERDIDO' : `−${r.damageToAttacker}`, r.attackerDestroyed, now + 250);
       }
     }
-    this.afterAction(unit.id);
+    this.afterAction(unit.id, !!msg);
+  }
+
+  /** Move next to the target and attack, in one click. */
+  private assault(unit: Unit, target: Coord): void {
+    const plan = this.session.assaultPlan(unit.id, target);
+    if (!plan) return this.toast('No hay forma de atacar ese objetivo este turno.');
+    const from = { ...unit.position };
+    const steps = plan.path.filter((s) => s.turn === 0).map((s) => s.coord);
+    const logBefore = this.session.log.length;
+    const msg = this.session.assault(unit.id, target);
+    if (msg) this.toast(msg, true);
+    this.celebrateCaptures(logBefore);
+    this.sound.play('move');
+    const now = performance.now();
+    this.renderer.animateMove(unit.id, unit.type, unit.owner, from, steps, now);
+    const r = this.session.lastCombat;
+    if (r && r.attacker === unit.id && !msg) {
+      const hitAt = now + steps.length * 70;
+      this.sound.play('attack', steps.length * 70);
+      if (r.defenderDestroyed || r.attackerDestroyed) this.sound.play('explosion', steps.length * 70 + 120);
+      this.tutorial.done('attack');
+      this.renderer.blast(target, r.defenderDestroyed ? 'DESTRUIDO' : `−${r.damageToDefender}`, r.defenderDestroyed, hitAt);
+      if (r.damageToAttacker > 0 || r.attackerDestroyed) {
+        this.renderer.blast(plan.approach, r.attackerDestroyed ? 'PERDIDO' : `−${r.damageToAttacker}`, r.attackerDestroyed, hitAt + 250);
+      }
+    }
+    this.afterAction(unit.id, !!msg);
+  }
+
+  /** Fanfare (and tutorial progress) if the last action took a city. */
+  private celebrateCaptures(logFrom: number): void {
+    if (this.session.log.slice(logFrom).some((e) => e.text.startsWith('Capturaste'))) {
+      this.sound.play('capture', 150);
+      this.tutorial.done('capture');
+    }
   }
 
   private hasForeignUnit(t: Coord): boolean {
@@ -273,21 +335,24 @@ class App {
   }
 
   /** After acting: stay on the unit if it can still act, else move on to the next one. */
-  private afterAction(id: UnitId): void {
+  private afterAction(id: UnitId, keepToast = false): void {
     this.refresh();
     const u = this.session.ownUnit(id);
     if (this.session.match.status !== 'playing') return;
     if (u && u.movesLeft > 0 && !this.session.orders.has(id)) return this.select({ kind: 'unit', id });
     const next = this.session.nextIdleUnit(id);
     this.select(next ? { kind: 'unit', id: next.id } : null, true);
-    if (!next) this.toast('Todas las unidades movieron. Enter termina el turno.');
+    if (!next && !keepToast) this.toast('Todas las unidades movieron. Enter termina el turno.');
   }
 
   private nextUnit(): void {
     const cur = this.sel?.kind === 'unit' ? this.sel.id : undefined;
     const next = this.session.nextIdleUnit(cur);
-    if (next) this.select({ kind: 'unit', id: next.id }, true);
-    else this.toast('No quedan unidades por mover. Enter termina el turno.');
+    if (next) {
+      this.sound.play('select');
+      this.tutorial.done('select');
+      this.select({ kind: 'unit', id: next.id }, true);
+    } else this.toast('No quedan unidades por mover. Enter termina el turno.');
   }
 
   private skipUnit(): void {
@@ -311,7 +376,9 @@ class App {
     if (this.botsPlaying || s.match.status !== 'playing' || s.awaitingHandoff) return;
     this.cameras.set(s.viewer, { ...this.renderer.camera });
     s.endTurn({ runBots: false });
+    this.tutorial.done('end');
     this.sel = null;
+    this.report.hidden = true;
     this.runBots();
   }
 
@@ -348,7 +415,32 @@ class App {
     this.focusViewer();
     const next = this.session.nextIdleUnit();
     if (next) this.select({ kind: 'unit', id: next.id }, true);
+    this.showRivalReport();
+    this.sound.play(this.session.rivalReport.some((e) => e.tone === 'bad') ? 'alarm' : 'turn');
     this.dirty = true;
+  }
+
+  /** What happened during the computer's turn, each item with a "Ver" button. */
+  private showRivalReport(): void {
+    const items = this.session.rivalReport;
+    if (items.length === 0) {
+      this.report.hidden = true;
+      return;
+    }
+    const icon = { bad: '▲', warn: '●', good: '✓', info: '·' } as const;
+    this.report.innerHTML = `
+      <header><h2>Durante el turno rival</h2><button type="button" class="close" data-act="close" aria-label="Cerrar resumen">×</button></header>
+      <ol>${items.map((e, i) => `<li data-tone="${e.tone}"><span class="ic" aria-hidden="true">${icon[e.tone]}</span><span>${esc(e.text)}</span>${e.at ? `<button type="button" class="btn small" data-at="${i}">Ver</button>` : ''}</li>`).join('')}</ol>`;
+    this.report.hidden = false;
+    this.report.querySelector('[data-act=close]')!.addEventListener('click', () => { this.report.hidden = true; });
+    this.report.querySelectorAll<HTMLButtonElement>('[data-at]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const at = items[Number(b.dataset.at)]!.at!;
+        this.renderer.centerOn(at);
+        this.select({ kind: 'tile', at });
+        this.sound.play('select');
+      }),
+    );
   }
 
   private updateHoverPath(): void {
@@ -361,7 +453,12 @@ class App {
     const key = `${u.id}@${this.hover.x},${this.hover.y}:${u.position.x},${u.position.y}:${u.movesLeft}`;
     if (key === this.pathKey) return;
     this.pathKey = key;
-    this.path = this.targets?.has(this.session.world.grid.index(this.hover)) ? null : this.session.plan(u.id, this.hover);
+    const i = this.session.world.grid.index(this.hover);
+    if (this.targets?.has(i)) this.path = null;
+    else if (this.assaults?.has(i)) {
+      const a = this.session.assaultPlan(u.id, this.hover);
+      this.path = a ? { steps: [...a.path], turns: 1 } : null;
+    } else this.path = this.session.plan(u.id, this.hover);
   }
 
   // ─── Rendering ─────────────────────────────────────────────────────────────
@@ -369,7 +466,7 @@ class App {
   private frame(time: number): void {
     const view = this.session ? this.session.view() : null;
     const hidden = !this.session || (this.session.awaitingHandoff && this.session.humanCount > 1);
-    if (view && !hidden && (this.dirty || this.sel || this.renderer.animating || this.targets?.size)) {
+    if (view && !hidden && (this.dirty || this.sel || this.renderer.animating || this.targets?.size || this.assaults?.size)) {
       const r = this.renderer;
       r.clamp(view.width, view.height);
       const u = this.selectedUnit();
@@ -380,6 +477,7 @@ class App {
           selectedTile: this.sel && this.sel.kind !== 'unit' ? this.selectionCoord() : undefined,
           reach: this.reach,
           targets: this.targets,
+          assaults: this.assaults,
           path: this.path?.steps,
           hover: this.hover,
         },
@@ -400,6 +498,8 @@ class App {
     const idle = s.idleUnits().length;
     const total = [...s.world.allCities()].length;
     const mine = s.world.citiesOf(p).length;
+    const army = s.world.unitsOf(p).length;
+    const cap = armyCap(s.world, p);
     this.bar.innerHTML = `
       <div class="brand"><span class="mark" aria-hidden="true"></span>Strategic <b>Conquest</b></div>
       <div class="readout">
@@ -407,16 +507,23 @@ class App {
         <span class="stat"><small>Ronda</small><b>${s.match.round}</b></span>
         <span class="stat"><small>Ciudades</small><b>${mine}</b><i>/${total}</i>
           <span class="share" style="--v:${Math.round((mine / Math.max(1, total)) * 100)}%"></span></span>
+        <span class="stat ${army >= cap ? 'over' : ''}" title="Cada ciudad sostiene 5 unidades más (base 6). Al límite, las ciudades no producen."><small>Ejército</small><b>${army}</b><i>/${cap}</i></span>
         <span class="stat ${idle ? 'pending' : 'done'}"><small>Por mover</small><b>${idle}</b></span>
       </div>
       <div class="spacer"></div>
       <div class="actions">
+        <button class="btn icon ${this.sound.muted ? 'muted' : ''}" id="btn-sound" type="button" aria-label="${this.sound.muted ? 'Activar sonido' : 'Silenciar'}" title="${this.sound.muted ? 'Sonido apagado' : 'Sonido encendido'}">♪</button>
         <button class="btn icon" id="btn-help" type="button" aria-label="Ayuda y controles">?</button>
         <button class="btn" id="btn-new" type="button">Nueva partida</button>
         <button class="btn" id="btn-next" type="button">Siguiente <kbd>N</kbd></button>
         <button class="btn primary ${idle ? '' : 'ready'}" id="btn-end" type="button">Fin de turno <kbd>Enter</kbd></button>
       </div>`;
     this.bar.querySelector('#btn-help')!.addEventListener('click', () => this.showHelp());
+    this.bar.querySelector('#btn-sound')!.addEventListener('click', () => {
+      this.sound.toggle();
+      this.sound.play('select');
+      this.renderBar();
+    });
     this.bar.querySelector('#btn-new')!.addEventListener('click', () => this.showSetup());
     this.bar.querySelector('#btn-next')!.addEventListener('click', () => this.nextUnit());
     this.bar.querySelector('#btn-end')!.addEventListener('click', () => this.endTurn());
@@ -437,7 +544,12 @@ class App {
     const parts = [`<span>X<b>${String(h.x).padStart(3, '0')}</b> Y<b>${String(h.y).padStart(3, '0')}</b></span>`, `<span><b>${terrain}</b>${vis}</span>`];
     const sel = this.selectedUnit();
     const fc = sel && this.targets?.has(i) ? this.session.forecast(sel.id, h) : null;
-    if (fc) {
+    const assault = sel && !fc && this.assaults?.has(i) ? this.session.assaultPlan(sel.id, h) : null;
+    if (assault) {
+      const fmt = (n: number) => n.toFixed(1).replace(/\.0$/, '');
+      const f = assault.forecast;
+      parts.push(`<span class="fc">Mover y atacar desde X${assault.approach.x} Y${assault.approach.y}: daño estimado <b>−${fmt(f.damageToDefender)}</b>${f.defenderCanCounter ? ` · contraataque <b>−${fmt(f.damageToAttacker)}</b>` : ' · sin contraataque'}${f.interceptionDamage ? ` · antiaéreo <b>−${fmt(f.interceptionDamage)}</b>` : ''}</span>`);
+    } else if (fc) {
       const fmt = (n: number) => n.toFixed(1).replace(/\.0$/, '');
       parts.push(`<span class="fc">Ataque: daño estimado <b>−${fmt(fc.damageToDefender)}</b>${fc.defenderCanCounter ? ` · contraataque <b>−${fmt(fc.damageToAttacker)}</b>` : ' · sin contraataque'}${fc.interceptionDamage ? ` · antiaéreo <b>−${fmt(fc.interceptionDamage)}</b>` : ''}</span>`);
     } else if (this.path) {
@@ -480,7 +592,11 @@ class App {
     const others = s.ownUnitsAt(u.position).filter((o) => o.id !== u.id && o.carriedBy === null);
     const supply = def.domain !== 'land' ? '' : u.turnsOutOfSupply === 0 ? 'Abastecida' : `Aislada ${plural(u.turnsOutOfSupply, 'turno', 'turnos')}${u.isOutOfSupply ? ' · −25% def.' : ''}`;
     const range = def.attackRange ? `${def.attackRange.min}–${def.attackRange.max}` : '1';
-    const attackInfo = def.attack <= 0 ? 'Sin armas' : u.attackedThisTurn ? 'Ya atacó' : this.targets?.size ? plural(this.targets.size, 'objetivo a tiro', 'objetivos a tiro') : 'Sin objetivos a tiro';
+    const reachable = this.assaults?.size ?? 0;
+    const attackInfo = def.attack <= 0 ? 'Sin armas' : u.attackedThisTurn ? 'Ya atacó'
+      : this.targets?.size ? plural(this.targets.size, 'objetivo a tiro', 'objetivos a tiro') + (reachable ? ` · ${reachable} moviendo` : '')
+      : reachable ? `${plural(reachable, 'objetivo', 'objetivos')} moviendo antes`
+      : 'Sin objetivos a tiro';
     const chip = (x: Unit) => `<button type="button" class="chip-unit" data-unit="${x.id}" style="--faction:${color}" title="${UNIT_NAME[x.type]}"><b>${UNIT_CODE[x.type]}</b> ${x.movesLeft}/${x.maxMoves}</button>`;
 
     this.selPanel.innerHTML = `
@@ -502,6 +618,7 @@ class App {
         <button class="btn small" type="button" data-act="skip">Quieta <kbd>Espacio</kbd></button>
         ${def.stealth ? `<button class="btn small" type="button" data-act="silent">${u.silentRunning ? 'Emerger' : 'Silencio'} <kbd>S</kbd></button>` : ''}
         ${order ? `<button class="btn small" type="button" data-act="cancel">Cancelar orden</button>` : ''}
+        <button class="btn small ghost" type="button" data-act="disband" title="La quita del juego y libera lugar en el ejército">Disolver</button>
       </div>
       ${cargo.length ? `<div class="chips"><small>A bordo</small>${cargo.map(chip).join('')}</div>` : ''}
       ${others.length ? `<div class="chips"><small>En la casilla</small>${others.slice(0, 8).map(chip).join('')}${others.length > 8 ? `<span class="tag">+${others.length - 8}</span>` : ''}</div>` : ''}`;
@@ -510,6 +627,19 @@ class App {
     const q = (a: string) => this.selPanel.querySelector(`[data-act=${a}]`);
     q('skip')?.addEventListener('click', () => this.skipUnit());
     q('silent')?.addEventListener('click', () => this.toggleSilent());
+    q('disband')?.addEventListener('click', (e) => {
+      const b = e.currentTarget as HTMLButtonElement;
+      if (b.dataset.armed !== '1') {
+        b.dataset.armed = '1';
+        b.textContent = '¿Seguro? Disolver';
+        b.classList.add('danger');
+        return;
+      }
+      const msg = this.session.disband(u.id);
+      if (msg) return this.toast(msg, true);
+      this.sound.play('explosion');
+      this.afterAction(u.id);
+    });
     q('cancel')?.addEventListener('click', () => {
       this.session.cancelOrder(u.id);
       this.refresh();
@@ -652,10 +782,15 @@ class App {
         <dt>Enter</dt><dd>Fin de turno</dd>
       </dl>
       <p class="muted small">La tropa que viaja en un transporte en altamar no aparece en "Siguiente": se mueve con el barco. Vuelve a aparecer cuando el transporte está junto a tierra y puede desembarcar.</p>
-      <div class="row"><button class="btn primary" type="button" data-act="close">Entendido</button></div></div>`;
+      <div class="row"><button class="btn primary" type="button" data-act="close">Entendido</button><button class="btn" type="button" data-act="tutorial">Ver el tutorial</button></div></div>`;
     o.querySelector('[data-act=close]')!.addEventListener('click', () => {
       delete o.dataset.help;
       this.renderOverlay();
+    });
+    o.querySelector('[data-act=tutorial]')!.addEventListener('click', () => {
+      delete o.dataset.help;
+      this.renderOverlay();
+      this.tutorial.restart();
     });
   }
 
@@ -669,6 +804,11 @@ class App {
     o.innerHTML = `<form class="sheet" id="setup">
       <h2>Nueva partida</h2>
       <p class="muted">Cada jugador ve sólo lo que descubrieron sus unidades. Contra la computadora jugás como Jugador 1, y cada bot elige un estilo de juego distinto por partida. La dificultad sólo acelera la producción de la computadora: nunca ve más que vos.</p>
+      <div class="presets" role="group" aria-label="Partidas rápidas">
+        <button type="button" class="preset" data-preset="duel"><b>Duelo</b><small>1 contra 1 · mapa chico</small></button>
+        <button type="button" class="preset" data-preset="all"><b>Todos contra mí</b><small>1 contra 3 bots · mediano</small></button>
+        <button type="button" class="preset" data-preset="chaos"><b>Caos</b><small>1 contra 5 bots · grande</small></button>
+      </div>
       <div class="grid2">
         <label class="field" for="mode">Rivales<select id="mode">${opt('bots', 'Contra la computadora', prev?.mode ?? 'bots')}${opt('hotseat', 'Humanos en esta pantalla', prev?.mode ?? 'bots')}</select></label>
         <label class="field" for="difficulty">Dificultad<select id="difficulty">${opt('normal', 'Normal · sin ventaja', prev?.difficulty ?? 'hard')}${opt('hard', 'Difícil · +25% producción', prev?.difficulty ?? 'hard')}${opt('brutal', 'Brutal · +50% producción', prev?.difficulty ?? 'hard')}</select></label>
@@ -681,6 +821,21 @@ class App {
       <div class="row"><button class="btn primary" type="submit">Generar y jugar</button><button class="btn" type="button" data-act="cancel">Cancelar</button></div>
     </form>`;
     const form = o.querySelector<HTMLFormElement>('#setup')!;
+    const PRESETS: Record<string, { players: string; size: string; density: string }> = {
+      duel: { players: '2', size: 'small', density: 'normal' },
+      all: { players: '4', size: 'medium', density: 'normal' },
+      chaos: { players: '6', size: 'huge', density: 'normal' },
+    };
+    form.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const p = PRESETS[b.dataset.preset!]!;
+        (form.querySelector('#mode') as HTMLSelectElement).value = 'bots';
+        (form.querySelector('#players') as HTMLSelectElement).value = p.players;
+        (form.querySelector('#size') as HTMLSelectElement).value = p.size;
+        (form.querySelector('#density') as HTMLSelectElement).value = p.density;
+        form.querySelectorAll('.preset').forEach((x) => x.classList.toggle('on', x === b));
+      }),
+    );
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const v = (id: string) => (form.querySelector(`#${id}`) as HTMLInputElement).value;
@@ -700,7 +855,8 @@ class App {
     });
   }
 
-  private toast(msg: string): void {
+  private toast(msg: string, error = false): void {
+    if (error) this.sound.play('error');
     this.toastEl.textContent = msg;
     this.toastEl.hidden = false;
     clearTimeout(this.toastTimer);
