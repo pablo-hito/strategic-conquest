@@ -173,6 +173,22 @@ describe('GameSession (hot-seat)', () => {
     expect(s.rivalReport.every((e) => e.audience === p1 || e.audience === 'all')).toBe(true);
   });
 
+  it('plays a duel on any map size, custom ones included, and saves it', () => {
+    for (const size of ['small', 'medium', 'huge', { width: 30, height: 20 }, { width: 200, height: 120 }] as const) {
+      const s = GameSession.create({ ...opts, mode: 'bots', size });
+      expect(s.players).toHaveLength(2);
+      const w = typeof size === 'string' ? undefined : size.width;
+      if (w) expect(s.world.grid.width).toBe(w);
+      s.endTurn(); // one full round with the bot
+      const copy = GameSession.restore(JSON.parse(JSON.stringify(s.save())));
+      expect(copy.options.size).toEqual(size);
+    }
+  });
+
+  it('refuses a map too small for the number of players', () => {
+    expect(() => GameSession.create({ ...opts, players: 6, size: { width: 30, height: 20 } })).toThrow();
+  });
+
   it('round-trips through a save', () => {
     const s = GameSession.create(opts);
     for (let i = 0; i < 6; i++) playTurn(s);

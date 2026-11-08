@@ -48,7 +48,8 @@ export type Difficulty = 'normal' | 'hard' | 'brutal';
 export const DIFFICULTY_BONUS: Record<Difficulty, number> = { normal: 0, hard: 0.25, brutal: 0.5 };
 
 export interface NewGameOptions {
-  readonly size: MapSize;
+  /** A preset size, or any custom width × height. */
+  readonly size: MapSize | { readonly width: number; readonly height: number };
   readonly density: IslandDensity;
   readonly players: number;
   readonly seed: string;

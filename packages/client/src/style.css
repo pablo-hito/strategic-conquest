@@ -279,6 +279,12 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn.danger { border-color: var(--bad); color: var(--bad); }
 .btn.icon.muted { color: var(--fg-faint); text-decoration: line-through; }
 
+/* Custom map size */
+.custom-size { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; gap: 8px; }
+.custom-size > span { padding-bottom: 8px; color: var(--fg-dim); }
+.custom-size .muted { grid-column: 1 / -1; }
+input[type='number'] { width: 100%; padding: 7px 9px; border-radius: 7px; background: #070d15; border: 1px solid var(--line-strong); }
+
 /* Quick-start presets in the new-game sheet */
 .presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .preset {
@@ -295,6 +301,17 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .preset b { font: 600 var(--step-0)/1.1 var(--font-display); letter-spacing: 0.04em; }
 .preset small { font-size: var(--step--2); color: var(--fg-dim); }
 .preset:hover, .preset.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.preset.duel { cursor: default; }
+.preset .sizes { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px; }
+.preset .sizes button {
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--line-strong);
+  background: #0b1520;
+  font: 500 var(--step--2)/1.2 var(--font-data);
+  cursor: pointer;
+}
+.preset .sizes button:hover, .preset .sizes button.on { border-color: var(--accent); color: var(--accent); }
 
 /* ── Side rail: fixed, no scroll ─────────────────────────────── */
 .side {

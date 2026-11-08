@@ -205,7 +205,8 @@ Vite + TypeScript + Canvas 2D, sin framework. Juega partidas locales (contra la 
 - **Resumen del turno rival**: al volver tu turno, una tarjeta con lo que te pasó (ataques, ciudades perdidas o tomadas, contactos nuevos y producción), cada cosa con un botón "Ver" que centra el mapa.
 - `tutorial.ts`: "Primeros pasos" en seis pasos que avanzan cuando hacés lo que piden (elegir, mover, producir, capturar, terminar el turno, atacar). Aparece en la primera partida; se reabre desde "?".
 - `sound.ts`: efectos sintetizados con Web Audio, sin archivos (selección, movimiento, disparo, explosión, captura, turno, alarma, error), con botón para silenciar.
-- Partidas rápidas en la pantalla de nueva partida: Duelo (1 contra 1, chico), Todos contra mí (1 contra 3 bots, mediano) y Caos (1 contra 5, grande). Los bots también pelean entre sí.
+- Partidas rápidas en la pantalla de nueva partida: Duelo (1 contra 1, en cualquier tamaño: chico, mediano, grande o a medida), Todos contra mí (1 contra 3 bots, mediano) y Caos (1 contra 5, grande). Los bots también pelean entre sí.
+- Tamaño **a medida** para cualquier partida: ancho 30–200 y alto 20–120. Si el mapa no alcanza para ubicar capitales justas para todos los jugadores, la pantalla lo avisa en vez de fallar.
 - Barra superior con el ejército contra su límite ("Ejército 34/41"), en rojo al llegar; botón "Disolver" (con confirmación) en el panel de la unidad.
 - `scripts/build-standalone.mjs`: empaqueta todo en un único HTML.
 

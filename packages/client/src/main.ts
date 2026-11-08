@@ -801,11 +801,16 @@ class App {
     o.hidden = false;
     o.dataset.setup = '1';
     const opt = (v: string, label: string, cur?: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
+    const prevSize = typeof prev?.size === 'object' ? 'custom' : prev?.size;
+    const prevCustom = typeof prev?.size === 'object' ? prev.size : { width: 80, height: 50 };
     o.innerHTML = `<form class="sheet" id="setup">
       <h2>Nueva partida</h2>
       <p class="muted">Cada jugador ve sólo lo que descubrieron sus unidades. Contra la computadora jugás como Jugador 1, y cada bot elige un estilo de juego distinto por partida. La dificultad sólo acelera la producción de la computadora: nunca ve más que vos.</p>
       <div class="presets" role="group" aria-label="Partidas rápidas">
-        <button type="button" class="preset" data-preset="duel"><b>Duelo</b><small>1 contra 1 · mapa chico</small></button>
+        <div class="preset duel" data-preset-card="duel"><b>Duelo</b><small>1 contra 1 · elegí el mapa</small>
+          <div class="sizes" role="group" aria-label="Tamaño del mapa del duelo">
+            <button type="button" data-duel="small">Chico</button><button type="button" data-duel="medium">Mediano</button><button type="button" data-duel="huge">Grande</button><button type="button" data-duel="custom">A medida</button>
+          </div></div>
         <button type="button" class="preset" data-preset="all"><b>Todos contra mí</b><small>1 contra 3 bots · mediano</small></button>
         <button type="button" class="preset" data-preset="chaos"><b>Caos</b><small>1 contra 5 bots · grande</small></button>
       </div>
@@ -813,7 +818,13 @@ class App {
         <label class="field" for="mode">Rivales<select id="mode">${opt('bots', 'Contra la computadora', prev?.mode ?? 'bots')}${opt('hotseat', 'Humanos en esta pantalla', prev?.mode ?? 'bots')}</select></label>
         <label class="field" for="difficulty">Dificultad<select id="difficulty">${opt('normal', 'Normal · sin ventaja', prev?.difficulty ?? 'hard')}${opt('hard', 'Difícil · +25% producción', prev?.difficulty ?? 'hard')}${opt('brutal', 'Brutal · +50% producción', prev?.difficulty ?? 'hard')}</select></label>
         <label class="field" for="players">Jugadores<select id="players">${[2, 3, 4, 5, 6].map((n) => opt(String(n), `${n} jugadores`, String(prev?.players ?? 2))).join('')}</select></label>
-        <label class="field" for="size">Tamaño del mapa<select id="size">${opt('small', 'Small · 60×40', prev?.size)}${opt('medium', 'Medium · 100×64', prev?.size)}${opt('huge', 'Huge · 160×100', prev?.size)}</select></label>
+        <label class="field" for="size">Tamaño del mapa<select id="size">${opt('small', 'Small · 60×40', prevSize)}${opt('medium', 'Medium · 100×64', prevSize)}${opt('huge', 'Huge · 160×100', prevSize)}${opt('custom', 'A medida…', prevSize)}</select></label>
+        <div class="custom-size wide" ${prevSize === 'custom' ? '' : 'hidden'}>
+          <label class="field" for="width">Ancho (30–200)<input type="number" id="width" min="30" max="200" step="1" value="${prevCustom.width}" /></label>
+          <span aria-hidden="true">×</span>
+          <label class="field" for="height">Alto (20–120)<input type="number" id="height" min="20" max="120" step="1" value="${prevCustom.height}" /></label>
+          <p class="muted small" id="size-note"></p>
+        </div>
         <label class="field" for="density">Densidad de islas<select id="density">${opt('sparse', 'Escasa · 22% tierra', prev?.density)}${opt('normal', 'Normal · 32% tierra', prev?.density ?? 'normal')}${opt('dense', 'Densa · 42% tierra', prev?.density)}</select></label>
         <label class="field wide" for="seed">Semilla del mapa<input type="text" id="seed" value="${esc(randomSeed())}" autocomplete="off" spellcheck="false" /></label>
       </div>
@@ -822,32 +833,71 @@ class App {
     </form>`;
     const form = o.querySelector<HTMLFormElement>('#setup')!;
     const PRESETS: Record<string, { players: string; size: string; density: string }> = {
-      duel: { players: '2', size: 'small', density: 'normal' },
       all: { players: '4', size: 'medium', density: 'normal' },
       chaos: { players: '6', size: 'huge', density: 'normal' },
+    };
+    const sizeSel = form.querySelector('#size') as HTMLSelectElement;
+    const custom = form.querySelector('.custom-size') as HTMLElement;
+    const widthIn = form.querySelector('#width') as HTMLInputElement;
+    const heightIn = form.querySelector('#height') as HTMLInputElement;
+    const note = form.querySelector('#size-note') as HTMLElement;
+    const updateSize = () => {
+      custom.hidden = sizeSel.value !== 'custom';
+      const w = Number(widthIn.value), h = Number(heightIn.value);
+      note.textContent = w * h > 160 * 100 ? 'Mapa muy grande: los turnos de la computadora van a tardar más.' : '';
+    };
+    sizeSel.addEventListener('change', updateSize);
+    widthIn.addEventListener('input', updateSize);
+    heightIn.addEventListener('input', updateSize);
+    const applyPreset = (players: string, size: string, density: string, card: Element) => {
+      (form.querySelector('#mode') as HTMLSelectElement).value = 'bots';
+      (form.querySelector('#players') as HTMLSelectElement).value = players;
+      sizeSel.value = size;
+      (form.querySelector('#density') as HTMLSelectElement).value = density;
+      form.querySelectorAll('.preset').forEach((x) => x.classList.toggle('on', x === card));
+      updateSize();
     };
     form.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) =>
       b.addEventListener('click', () => {
         const p = PRESETS[b.dataset.preset!]!;
-        (form.querySelector('#mode') as HTMLSelectElement).value = 'bots';
-        (form.querySelector('#players') as HTMLSelectElement).value = p.players;
-        (form.querySelector('#size') as HTMLSelectElement).value = p.size;
-        (form.querySelector('#density') as HTMLSelectElement).value = p.density;
-        form.querySelectorAll('.preset').forEach((x) => x.classList.toggle('on', x === b));
+        applyPreset(p.players, p.size, p.density, b);
+      }),
+    );
+    // Duel: 1 vs 1 on any map size, including a custom one.
+    const duelCard = form.querySelector('[data-preset-card=duel]')!;
+    form.querySelectorAll<HTMLButtonElement>('[data-duel]').forEach((b) =>
+      b.addEventListener('click', () => {
+        applyPreset('2', b.dataset.duel!, 'normal', duelCard);
+        duelCard.querySelectorAll('[data-duel]').forEach((x) => x.classList.toggle('on', x === b));
+        if (b.dataset.duel === 'custom') widthIn.focus();
       }),
     );
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const v = (id: string) => (form.querySelector(`#${id}`) as HTMLInputElement).value;
-      delete o.dataset.setup;
-      this.newGame({
-        size: v('size') as MapSize,
+      const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n) || lo));
+      const size = v('size') === 'custom'
+        ? { width: clamp(Number(v('width')), 30, 200), height: clamp(Number(v('height')), 20, 120) }
+        : (v('size') as MapSize);
+      const options: NewGameOptions = {
+        size,
         density: v('density') as IslandDensity,
         players: Number(v('players')),
         seed: v('seed').trim() || randomSeed(),
         mode: v('mode') as GameMode,
         difficulty: v('difficulty') as Difficulty,
-      });
+      };
+      try {
+        this.newGame(options);
+        delete o.dataset.setup;
+        this.renderOverlay();
+      } catch {
+        // The generator could not fit fair starting positions on this map.
+        note.textContent = `El mapa es demasiado chico para ${options.players} jugadores: agrandalo o usá menos jugadores.`;
+        custom.hidden = false;
+        sizeSel.value = 'custom';
+        this.toast('No se pudo generar el mapa con ese tamaño.', true);
+      }
     });
     o.querySelector('[data-act=cancel]')!.addEventListener('click', () => {
       delete o.dataset.setup;
