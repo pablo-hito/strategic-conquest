@@ -81,7 +81,13 @@ describe('checkStep', () => {
       ok: true,
       value: { kind: 'board', carrierId: tr.id },
     });
-    for (let i = 0; i < 3; i++) w.load(tr.id, w.spawnUnit('infantry', P1, { x: 3, y: 1 }).id);
+    // 5 of 6 taken: still room for infantry (size 1), not for a tank (size 3).
+    w.load(tr.id, w.spawnUnit('heavy_tank', P1, { x: 3, y: 1 }).id);
+    w.load(tr.id, w.spawnUnit('recon', P1, { x: 3, y: 1 }).id);
+    const tank = w.spawnUnit('heavy_tank', P1, { x: 2, y: 2 });
+    expect(checkStep(k, inf, inf.position, { x: 3, y: 1 })).toMatchObject({ ok: true, value: { kind: 'board' } });
+    expect(checkStep(k, tank, tank.position, { x: 3, y: 1 })).toMatchObject({ error: { code: 'NO_TRANSPORT_SPACE' } });
+    w.load(tr.id, w.spawnUnit('infantry', P1, { x: 3, y: 1 }).id);
     expect(checkStep(k, inf, inf.position, { x: 3, y: 1 })).toMatchObject({ error: { code: 'NO_TRANSPORT_SPACE' } });
   });
 
@@ -100,34 +106,37 @@ describe('checkStep', () => {
 
 describe('reachableThisTurn', () => {
   it('respects MP and the minimum-move rule', () => {
-    const w = new WorldState(Grid.fromAscii(['.h...', '.....']));
+    const w = new WorldState(Grid.fromAscii(['.M...', '.h...']));
     const inf = w.spawnUnit('infantry', P1, { x: 0, y: 0 });
-    expect(reachSet(w, inf)).toEqual(['0,1', '1,0', '1,1']); // hill costs 2 but a fresh unit may climb
+    // Mountains cost 3 and infantry has 2 MP, but a fresh unit may always take one step.
+    // Both tiles of the second column eat all its MP, so it gets no further.
+    expect(reachSet(w, inf)).toEqual(['0,1', '1,0', '1,1']);
 
     const tank = w.spawnUnit('heavy_tank', P1, { x: 0, y: 1 });
-    // 2 MP: two plains steps, or a single hill step
-    expect(reachSet(w, tank)).toEqual(['0,0', '1,0', '1,1', '2,0', '2,1']);
+    // 3 MP, mountains impassable: the hill (2) leaves 1 MP for one more plain.
+    expect(reachSet(w, tank)).toEqual(['0,0', '1,1', '2,0', '2,1']);
   });
 
   it('is empty after the unit spent its moves and halves with silent running', () => {
     const w = new WorldState(Grid.filled(8, 1, 'deep_ocean'));
-    const sub = w.spawnUnit('submarine', P1, { x: 0, y: 0 });
-    expect(reachSet(w, sub)).toEqual(['1,0', '2,0', '3,0']);
-    sub.setSilentRunning(true);
-    expect(reachSet(w, sub)).toEqual(['1,0']);
+    const sub = w.spawnUnit('submarine', P1, { x: 0, y: 0 }); // 5 MP
+    expect(reachSet(w, sub)).toEqual(['1,0', '2,0', '3,0', '4,0', '5,0']);
+    sub.setSilentRunning(true); // 2 MP
+    expect(reachSet(w, sub)).toEqual(['1,0', '2,0']);
     w.stepUnit(sub.id, { x: 1, y: 0 }, 1);
+    w.stepUnit(sub.id, { x: 2, y: 0 }, 1);
     expect(reachSet(w, sub)).toEqual([]);
   });
 
   it('caps aircraft by remaining fuel', () => {
-    const w = new WorldState(Grid.filled(20, 1, 'plains'));
-    const f = w.spawnUnit('fighter', P1, { x: 0, y: 0 });
-    for (let x = 1; x <= 10; x++) w.stepUnit(f.id, { x, y: 0 }, 1);
+    const w = new WorldState(Grid.filled(30, 1, 'plains'));
+    const f = w.spawnUnit('fighter', P1, { x: 0, y: 0 }); // 12 MP, 24 fuel
+    for (let x = 1; x <= 12; x++) w.stepUnit(f.id, { x, y: 0 }, 1);
     f.startTurn();
-    for (let x = 11; x <= 17; x++) w.stepUnit(f.id, { x, y: 0 }, 1);
+    for (let x = 13; x <= 21; x++) w.stepUnit(f.id, { x, y: 0 }, 1);
     // 3 fuel left, 3 MP left
     expect(f.fuel).toBe(3);
-    expect(reachSet(w, f)).toEqual(['14,0', '15,0', '16,0', '18,0', '19,0'].sort());
+    expect(reachSet(w, f)).toEqual(['18,0', '19,0', '20,0', '22,0', '23,0', '24,0'].sort());
   });
 });
 
@@ -143,31 +152,32 @@ describe('findPath', () => {
     const tank = w.spawnUnit('heavy_tank', P1, { x: 0, y: 0 });
     const path = findPath(truthKnowledge(w), tank, { x: 2, y: 0 })!;
     expect(coords(path.steps)).toEqual(['0,1', '1,2', '2,1', '2,0']);
-    expect(path.steps.map((s) => s.turn)).toEqual([0, 0, 1, 1]);
+    expect(path.steps.map((s) => s.turn)).toEqual([0, 0, 0, 1]); // 3 MP per turn
     expect(path.turns).toBe(2);
   });
 
   it('prefers fewer turns over fewer MP when the minimum-move rule makes hills cheap', () => {
-    const w = new WorldState(Grid.fromAscii(['.hhh.']));
+    const w = new WorldState(Grid.fromAscii(['.MMM.']));
     const inf = w.spawnUnit('infantry', P1, { x: 0, y: 0 });
     const path = findPath(truthKnowledge(w), inf, { x: 4, y: 0 })!;
-    expect(path.turns).toBe(4); // one hill per turn, not two turns per hill
+    expect(path.turns).toBe(4); // one mountain per turn (cost 3 > 2 MP), not two turns each
   });
 
   it('starts the count on the next turn when no MP are left', () => {
-    const w = new WorldState(Grid.filled(5, 1, 'plains'));
+    const w = new WorldState(Grid.filled(8, 1, 'plains'));
     const inf = w.spawnUnit('infantry', P1, { x: 0, y: 0 });
     w.stepUnit(inf.id, { x: 1, y: 0 }, 1);
-    const path = findPath(truthKnowledge(w), inf, { x: 3, y: 0 })!;
-    expect(path.steps.map((s) => s.turn)).toEqual([1, 2]);
+    w.stepUnit(inf.id, { x: 2, y: 0 }, 1);
+    const path = findPath(truthKnowledge(w), inf, { x: 5, y: 0 })!;
+    expect(path.steps.map((s) => s.turn)).toEqual([1, 1, 2]);
   });
 
   it('gives up on routes longer than maxTurns', () => {
-    const w = new WorldState(Grid.filled(12, 1, 'plains'));
-    const inf = w.spawnUnit('infantry', P1, { x: 0, y: 0 });
+    const w = new WorldState(Grid.filled(14, 1, 'plains'));
+    const inf = w.spawnUnit('infantry', P1, { x: 0, y: 0 }); // 2 tiles per turn
     const k = truthKnowledge(w);
-    expect(findPath(k, inf, { x: 5, y: 0 }, { maxTurns: 5 })?.turns).toBe(5);
-    expect(findPath(k, inf, { x: 6, y: 0 }, { maxTurns: 5 })).toBeNull();
+    expect(findPath(k, inf, { x: 10, y: 0 }, { maxTurns: 5 })?.turns).toBe(5);
+    expect(findPath(k, inf, { x: 11, y: 0 }, { maxTurns: 5 })).toBeNull();
   });
 
   it('returns null when unreachable and plans a boarding as the last step', () => {
@@ -202,7 +212,7 @@ describe('moveUnit', () => {
     if (!r.ok) return;
     expect(r.value.fogUpdates.get(P1)?.revealed.sort((a, b) => a - b)).toEqual([4, 5, 6]);
     expect(r.value.fogUpdates.has(P2)).toBe(false); // P2 saw nothing change
-    expect(recon.movesLeft).toBe(0);
+    expect(recon.movesLeft).toBe(2); // 5 MP, 3 spent
   });
 
   it('validates ownership, emptiness and the first step', () => {
@@ -224,9 +234,9 @@ describe('moveUnit', () => {
     expect(r).toMatchObject({ ok: true, value: { stepsTaken: 2, stoppedBy: 'CONTACT' } });
     if (!r.ok) return;
     expect(r.value.fogUpdates.get(P1)?.unitsSpotted).toContain(enemy.id);
-    // Vision is not symmetric in range: the infantry (vision 1) has not seen the recon.
+    // Vision is not symmetric in range: the infantry (vision 2) has not seen the recon.
     expect(r.value.fogUpdates.has(P2)).toBe(false);
-    expect(recon.movesLeft).toBe(1); // can still act
+    expect(recon.movesLeft).toBe(3); // can still act
   });
 
   it('stops when a hidden unit blocks the way', () => {
@@ -261,33 +271,33 @@ describe('moveUnit', () => {
   });
 
   it('crashes aircraft that run dry away from a base, refuels them over own cities', () => {
-    const w = new WorldState(Grid.filled(30, 1, 'plains'));
-    const city = w.foundCity('Base', { x: 15, y: 0 });
+    const w = new WorldState(Grid.filled(40, 1, 'plains'));
+    const city = w.foundCity('Base', { x: 18, y: 0 });
     city.capture(P1);
     const ctx = ctxFor(w);
-    const f = w.spawnUnit('fighter', P1, { x: 0, y: 0 });
+    const f = w.spawnUnit('fighter', P1, { x: 0, y: 0 }); // 12 MP, 24 fuel
     const leg = (from: number, to: number) =>
       Array.from({ length: to - from }, (_, i) => ({ x: from + i + 1, y: 0 }));
 
-    moveUnit(ctx, P1, f.id, leg(0, 10));
+    moveUnit(ctx, P1, f.id, leg(0, 12));
     f.startTurn();
-    moveUnit(ctx, P1, f.id, leg(10, 15)); // lands at the city on fuel 5 -> refueled
-    expect(f.fuel).toBe(20);
+    moveUnit(ctx, P1, f.id, leg(12, 18)); // lands at the city on fuel 6 -> refueled
+    expect(f.fuel).toBe(24);
 
-    const open = new WorldState(Grid.filled(30, 1, 'plains'));
+    const open = new WorldState(Grid.filled(40, 1, 'plains'));
     const octx = ctxFor(open);
     const doomed = open.spawnUnit('fighter', P1, { x: 0, y: 0 });
-    moveUnit(octx, P1, doomed.id, leg(0, 10));
+    moveUnit(octx, P1, doomed.id, leg(0, 12));
     doomed.startTurn();
-    const r = moveUnit(octx, P1, doomed.id, leg(10, 20));
-    expect(r).toMatchObject({ value: { stoppedBy: 'CRASHED', stepsTaken: 10 } });
+    const r = moveUnit(octx, P1, doomed.id, leg(12, 24));
+    expect(r).toMatchObject({ value: { stoppedBy: 'CRASHED', stepsTaken: 12 } });
     expect(open.unit(doomed.id)).toBeUndefined();
   });
 
   it('stops with NO_MOVES_LEFT when the path is longer than this turn allows', () => {
     const w = new WorldState(Grid.filled(6, 1, 'plains'));
     const tank = w.spawnUnit('heavy_tank', P1, { x: 0, y: 0 });
-    const r = moveUnit(ctxFor(w), P1, tank.id, [1, 2, 3, 4].map((x) => ({ x, y: 0 })));
-    expect(r).toMatchObject({ value: { stepsTaken: 2, stoppedBy: 'NO_MOVES_LEFT' } });
+    const r = moveUnit(ctxFor(w), P1, tank.id, [1, 2, 3, 4, 5].map((x) => ({ x, y: 0 })));
+    expect(r).toMatchObject({ value: { stepsTaken: 3, stoppedBy: 'NO_MOVES_LEFT' } });
   });
 });

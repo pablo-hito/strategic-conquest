@@ -91,7 +91,7 @@ export class WorldState {
     if (!unit) return [];
     const removed: UnitId[] = [];
     for (const cargoId of [...unit.cargo]) removed.push(...this.removeUnit(cargoId));
-    if (unit.carriedBy) this.units.get(unit.carriedBy)?._removeCargo(id);
+    if (unit.carriedBy) this.units.get(unit.carriedBy)?._removeCargo(id, unit.def.size);
     this.indexRemove(id, unit.position);
     this.units.delete(id);
     removed.push(id);
@@ -118,7 +118,7 @@ export class WorldState {
     invariant(carrier.owner === cargo.owner, 'cannot load enemy units');
     const r = carrier.canCarry(cargo);
     if (!r.ok) return r;
-    carrier._addCargo(cargoId);
+    carrier._addCargo(cargoId, cargo.def.size);
     cargo._setCarrier(carrierId);
     if (!sameTile(cargo.position, carrier.position)) {
       this.indexMove(cargoId, cargo.position, carrier.position);
@@ -132,7 +132,7 @@ export class WorldState {
     const carrier = this.units.get(carrierId);
     const cargo = this.units.get(cargoId);
     invariant(carrier && cargo, 'unknown unit');
-    if (!carrier._removeCargo(cargoId)) return err('NOT_CARRYING', 'unit is not aboard');
+    if (!carrier._removeCargo(cargoId, cargo.def.size)) return err('NOT_CARRYING', 'unit is not aboard');
     cargo._setCarrier(null);
     return ok(undefined);
   }

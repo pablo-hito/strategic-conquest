@@ -63,10 +63,10 @@ describe('line of sight', () => {
 describe('vision and detection', () => {
   it('hills extend land vision range', () => {
     const w = new WorldState(Grid.fromAscii(['h.....', '......']));
-    w.spawnUnit('infantry', P1, { x: 0, y: 0 }); // vision 1 + hills 1
+    w.spawnUnit('infantry', P1, { x: 0, y: 0 }); // vision 2 + hills 1
     const vis = computeVisibility(w, only(P1));
-    expect(vis.tiles[w.grid.index({ x: 2, y: 0 })]).toBeTruthy();
-    expect(vis.tiles[w.grid.index({ x: 3, y: 0 })]).toBeFalsy();
+    expect(vis.tiles[w.grid.index({ x: 3, y: 0 })]).toBeTruthy();
+    expect(vis.tiles[w.grid.index({ x: 4, y: 0 })]).toBeFalsy();
   });
 
   it('owned cities provide vision; neutral ones do not', () => {

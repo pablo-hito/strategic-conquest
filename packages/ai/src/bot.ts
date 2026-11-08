@@ -190,7 +190,7 @@ class BotTurn {
       this.landmass[this.world.grid.index(c)] === mine ||
       this.world.grid.neighbors(c).some((n) => this.landmass[this.world.grid.index(n)] === mine);
     const ships = this.world.unitsOf(this.me).filter(
-      (t) => t.def.cargo?.accepts.includes('land') && t.cargo.length < t.def.cargo.slots && touches(t.position),
+      (t) => t.def.cargo?.accepts.includes('land') && t.freeCapacity >= 1 && touches(t.position),
     );
     const here = ships.find((t) => this.dist(t.position, u.position) === 0);
     if (here) {
@@ -245,7 +245,7 @@ class BotTurn {
       .map((w) => this.world.unit(w))
       .filter((w): w is Unit => !!w && w.carriedBy === null);
     const nearbyWaiting = waiting.filter((w) => this.dist(w.position, t.position) <= 6);
-    const full = t.cargo.length >= (t.def.cargo?.slots ?? 0);
+    const full = t.freeCapacity <= 0;
 
     if (t.cargo.length === 0 || (!full && t.cargo.length < 2 && nearbyWaiting.length > 0)) {
       // Pick-up: sit in the own port closest to the idle infantry; they walk aboard.

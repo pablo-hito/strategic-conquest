@@ -7,8 +7,8 @@ const P2 = PlayerId('p2');
 describe('Unit', () => {
   it('lets a fresh unit take one expensive step, then stops it', () => {
     const inf = Unit.create(UnitId('u1'), 'infantry', P1, { x: 0, y: 0 });
-    expect(inf.canAfford(2)).toBe(true); // hills cost 2, infantry has 1 MP
-    expect(inf.stepTo({ x: 1, y: 0 }, 2).ok).toBe(true);
+    expect(inf.canAfford(3)).toBe(true); // mountains cost 3, infantry has 2 MP
+    expect(inf.stepTo({ x: 1, y: 0 }, 3).ok).toBe(true);
     expect(inf.movesLeft).toBe(0);
     expect(inf.stepTo({ x: 2, y: 0 }, 1)).toMatchObject({ ok: false, error: { code: 'NO_MOVES_LEFT' } });
     expect(inf.canAfford(Infinity)).toBe(false);
@@ -26,21 +26,21 @@ describe('Unit', () => {
   });
 
   it('burns fuel per tile flown', () => {
-    const f = Unit.create(UnitId('u1'), 'fighter', P1, { x: 0, y: 0 });
-    for (let i = 1; i <= 10; i++) f.stepTo({ x: i, y: 0 }, 1);
-    expect(f.fuel).toBe(10);
+    const f = Unit.create(UnitId('u1'), 'fighter', P1, { x: 0, y: 0 }); // 12 MP, 24 fuel
+    for (let i = 1; i <= 12; i++) f.stepTo({ x: i, y: 0 }, 1);
+    expect(f.fuel).toBe(12);
     f.startTurn();
-    for (let i = 11; i <= 20; i++) f.stepTo({ x: i, y: 0 }, 1);
+    for (let i = 13; i <= 24; i++) f.stepTo({ x: i, y: 0 }, 1);
     expect(f.isOutOfFuel).toBe(true);
     f.refuel();
-    expect(f.fuel).toBe(20);
+    expect(f.fuel).toBe(24);
   });
 
   it('halves moves on silent running and only for stealth hulls', () => {
     const sub = Unit.create(UnitId('u1'), 'submarine', P1, { x: 0, y: 0 });
     expect(sub.setSilentRunning(true).ok).toBe(true);
-    expect(sub.maxMoves).toBe(1);
-    expect(sub.movesLeft).toBe(1);
+    expect(sub.maxMoves).toBe(2); // 5 halved, rounded down
+    expect(sub.movesLeft).toBe(2);
     expect(sub.isStealthed).toBe(true);
     const dd = Unit.create(UnitId('u2'), 'destroyer', P1, { x: 0, y: 0 });
     expect(dd.setSilentRunning(true).ok).toBe(false);
@@ -153,20 +153,41 @@ describe('WorldState', () => {
     w.stepUnit(tr.id, { x: 3, y: 1 }, 1);
     expect(inf.position).toEqual({ x: 3, y: 1 });
     expect(w.unitsAt({ x: 3, y: 1 }).map((u) => u.id).sort()).toEqual([inf.id, tr.id].sort());
-    expect(inf.movesLeft).toBe(1); // riding is free
+    expect(inf.movesLeft).toBe(inf.maxMoves); // riding is free
 
     expect(w.removeUnit(tr.id).sort()).toEqual([inf.id, tr.id].sort());
     expect(w.unitsAt({ x: 3, y: 1 })).toEqual([]);
   });
 
-  it('enforces cargo rules', () => {
+  it('enforces cargo rules: kind of cargo, and capacity by size', () => {
     const w = new WorldState(grid);
-    const tr = w.spawnUnit('transport', P1, { x: 2, y: 1 });
+    const tr = w.spawnUnit('transport', P1, { x: 2, y: 1 }); // capacity 6
     const fighter = w.spawnUnit('fighter', P1, { x: 2, y: 1 });
     expect(w.load(tr.id, fighter.id)).toMatchObject({ error: { code: 'CARGO_NOT_ACCEPTED' } });
-    for (let i = 0; i < 3; i++) w.load(tr.id, w.spawnUnit('infantry', P1, { x: 2, y: 1 }).id);
+
+    const tank = w.spawnUnit('heavy_tank', P1, { x: 2, y: 1 }); // size 3
+    expect(w.load(tr.id, tank.id).ok).toBe(true);
+    for (let i = 0; i < 3; i++) expect(w.load(tr.id, w.spawnUnit('infantry', P1, { x: 2, y: 1 }).id).ok).toBe(true);
+    expect(tr.cargoLoad).toBe(6);
+    expect(tr.freeCapacity).toBe(0);
     const extra = w.spawnUnit('infantry', P1, { x: 2, y: 1 });
     expect(w.load(tr.id, extra.id)).toMatchObject({ error: { code: 'CARGO_FULL' } });
+
+    // Unloading the tank frees 3: room for a recon (2) but not another tank.
+    w.unload(tr.id, tank.id);
+    expect(tr.freeCapacity).toBe(3);
+    expect(w.load(tr.id, w.spawnUnit('recon', P1, { x: 2, y: 1 }).id).ok).toBe(true);
+    expect(w.load(tr.id, w.spawnUnit('heavy_tank', P1, { x: 2, y: 1 }).id)).toMatchObject({ error: { code: 'CARGO_FULL' } });
+  });
+
+  it('frees capacity when cargo is destroyed', () => {
+    const w = new WorldState(grid);
+    const tr = w.spawnUnit('transport', P1, { x: 2, y: 1 });
+    const tank = w.spawnUnit('heavy_tank', P1, { x: 2, y: 1 });
+    w.load(tr.id, tank.id);
+    w.removeUnit(tank.id);
+    expect(tr.cargo).toEqual([]);
+    expect(tr.freeCapacity).toBe(6);
   });
 
   it('round-trips through a snapshot with indexes rebuilt', () => {

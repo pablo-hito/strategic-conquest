@@ -29,7 +29,7 @@ describe('beginPlayerTurn', () => {
     const events = beginPlayerTurn(w, P1);
     expect(events).toMatchObject([{ type: 'unit_produced', unitType: 'recon', audience: P1 }]);
     const recon = w.unitsAt({ x: 0, y: 0 })[0]!;
-    expect(recon.movesLeft).toBe(3);
+    expect(recon.movesLeft).toBe(recon.maxMoves);
   });
 
   it('repairs and refuels units resting in an own city, only for that player', () => {
@@ -50,9 +50,9 @@ describe('beginPlayerTurn', () => {
 describe('endPlayerTurn', () => {
   it('airborne aircraft burn unused moves and crash when dry', () => {
     const w = new WorldState(Grid.filled(5, 1, 'plains'));
-    const f = w.spawnUnit('fighter', P1, { x: 2, y: 0 }); // fuel 20, moves 10
+    const f = w.spawnUnit('fighter', P1, { x: 2, y: 0 }); // fuel 24, moves 12
     expect(endPlayerTurn(w, P1)).toEqual([]);
-    expect(f.fuel).toBe(10);
+    expect(f.fuel).toBe(12);
     f.startTurn();
     const events = endPlayerTurn(w, P1);
     expect(events).toMatchObject([{ type: 'aircraft_crashed', unit: f.id }]);
@@ -64,19 +64,19 @@ describe('endPlayerTurn', () => {
     w.foundCity('A', { x: 2, y: 0 }).capture(P1);
     const f = w.spawnUnit('fighter', P1, { x: 2, y: 0 });
     for (let i = 0; i < 5; i++) endPlayerTurn(w, P1);
-    expect(f.fuel).toBe(20);
+    expect(f.fuel).toBe(24);
   });
 
   it('aircraft over an own carrier land on it; a full carrier does not save them', () => {
     const w = new WorldState(Grid.filled(5, 1, 'deep_ocean'));
     const cv = w.spawnUnit('carrier', P1, { x: 2, y: 0 });
     const planes = [0, 1, 2, 3].map(() => w.spawnUnit('fighter', P1, { x: 2, y: 0 }));
-    for (const p of planes) p.burnLoiterFuel(); // fuel 10, as if they had flown
+    for (const p of planes) p.burnLoiterFuel(); // fuel 12, as if they had flown
     const events = endPlayerTurn(w, P1);
     expect(events.filter((e) => e.type === 'aircraft_landed')).toHaveLength(3);
     expect(cv.cargo).toHaveLength(3);
     expect(planes[3]!.carriedBy).toBeNull();
-    expect(planes.slice(0, 3).every((p) => p.fuel === 20)).toBe(true);
+    expect(planes.slice(0, 3).every((p) => p.fuel === 24)).toBe(true); // 3 fighters × size 2 = capacity 6
   });
 
   it('cuts supply for land units isolated from own cities, but not those at sea', () => {
@@ -192,7 +192,7 @@ describe('Match (sequential mode)', () => {
     expect(match.fogs.get(P2)!.detectedUnits.has(sub.id)).toBe(true);
     const fog = unwrap(match.setSilentRunning(P1, sub.id, true));
     expect(fog.get(P2)?.unitsLost).toContain(sub.id);
-    expect(sub.maxMoves).toBe(1);
+    expect(sub.maxMoves).toBe(2);
     expect(match.setSilentRunning(P2, sub.id, false)).toMatchObject({ ok: false, error: { code: 'NOT_YOUR_TURN' } });
   });
 

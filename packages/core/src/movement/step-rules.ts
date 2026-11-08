@@ -76,7 +76,7 @@ export function checkStep(k: MapKnowledge, unit: Unit, from: Coord, to: Coord): 
     case 'land': {
       if (tdef.domain === 'water') {
         const transport = here.find(
-          (u) => u.id !== unit.carriedBy && u.def.cargo?.accepts.includes('land') && u.cargo.length < u.def.cargo.slots,
+          (u) => u.id !== unit.carriedBy && u.def.cargo?.accepts.includes('land') && u.freeCapacity >= def.size,
         );
         if (!transport) {
           const anyTransport = here.some((u) => u.def.cargo?.accepts.includes('land'));
@@ -105,6 +105,6 @@ export function isRefuelPoint(k: MapKnowledge, unit: Unit, at: Coord): boolean {
         u.owner === unit.owner &&
         u.id !== unit.id &&
         !!u.def.cargo?.accepts.includes('air') &&
-        (u.cargo.length < u.def.cargo.slots || u.cargo.includes(unit.id)),
+        (u.freeCapacity >= unit.def.size || u.cargo.includes(unit.id)),
     );
 }

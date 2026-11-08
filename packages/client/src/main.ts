@@ -418,7 +418,7 @@ class App {
         <dt>Alcance · Visión</dt><dd>${range} · ${def.vision}</dd>
         ${def.attack > 0 ? `<dt>Ataque</dt><dd>${u.attackedThisTurn ? 'Ya atacó este turno' : this.targets?.size ? `${this.targets.size} objetivo${this.targets.size === 1 ? '' : 's'} a tiro` : 'Sin objetivos a tiro'}</dd>` : ''}
         ${supply ? `<dt>Suministro</dt><dd>${supply}</dd>` : ''}
-        ${def.cargo ? `<dt>Carga</dt><dd>${u.cargo.length}/${def.cargo.slots}</dd>` : ''}
+        ${def.cargo ? `<dt>Carga</dt><dd>${u.cargoLoad}/${def.cargo.capacity}</dd>` : ''}
       </dl>
       ${order ? `<p class="muted">Orden: ir a X${order.x} Y${order.y}. Sigue sola cada turno.</p>` : ''}
       <div class="row">

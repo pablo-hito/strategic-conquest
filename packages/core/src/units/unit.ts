@@ -25,6 +25,8 @@ export interface UnitState {
   attackedThisTurn: boolean;
   carriedBy: UnitId | null;
   cargo: UnitId[];
+  /** Sum of the cargo's sizes (kept here because a unit can't look other units up). */
+  cargoLoad: number;
   silentRunning: boolean;
   turnsOutOfSupply: number;
 }
@@ -61,6 +63,7 @@ export class Unit {
       attackedThisTurn: false,
       carriedBy: null,
       cargo: [],
+      cargoLoad: 0,
       silentRunning: false,
       turnsOutOfSupply: 0,
     });
@@ -85,6 +88,9 @@ export class Unit {
   get entrenchment() { return this.s.entrenchment; }
   get carriedBy() { return this.s.carriedBy; }
   get cargo(): readonly UnitId[] { return this.s.cargo; }
+  get cargoLoad() { return this.s.cargoLoad; }
+  /** Space left aboard (0 for units that carry nothing). */
+  get freeCapacity(): number { return (this.def.cargo?.capacity ?? 0) - this.s.cargoLoad; }
   get silentRunning() { return this.s.silentRunning; }
   get turnsOutOfSupply() { return this.s.turnsOutOfSupply; }
   get movedThisTurn() { return this.s.movedThisTurn; }
@@ -223,20 +229,24 @@ export class Unit {
       return err('CARGO_NOT_ACCEPTED', `${this.def.name} cannot carry ${other.def.name}`);
     }
     if (other.carriedBy !== null) return err('ALREADY_CARRIED', `${other.def.name} is already aboard`);
-    if (this.s.cargo.length >= spec.slots) return err('CARGO_FULL', `${this.def.name} is full`);
+    if (other.def.size > this.freeCapacity) {
+      return err('CARGO_FULL', `${this.def.name} has room for ${this.freeCapacity}, ${other.def.name} needs ${other.def.size}`);
+    }
     return ok(undefined);
   }
 
   /** @internal use WorldState.load */
-  _addCargo(id: UnitId): void {
+  _addCargo(id: UnitId, size: number): void {
     this.s.cargo.push(id);
+    this.s.cargoLoad += size;
   }
 
   /** @internal use WorldState.unload */
-  _removeCargo(id: UnitId): boolean {
+  _removeCargo(id: UnitId, size: number): boolean {
     const i = this.s.cargo.indexOf(id);
     if (i < 0) return false;
     this.s.cargo.splice(i, 1);
+    this.s.cargoLoad = Math.max(0, this.s.cargoLoad - size);
     return true;
   }
 
