@@ -395,9 +395,18 @@ export class GameSession {
     if (out.stoppedBy === 'CRASHED') {
       this.orders.delete(unit.id);
       this.push(me, `${this.unitLabel(unit.type, unit.id)} ${STOP_TEXT.CRASHED}`, 'bad');
-    } else if (out.stoppedBy === 'CONTACT' || out.stoppedBy === 'BLOCKED') {
+    } else if (out.stoppedBy === 'CONTACT') {
       this.orders.delete(unit.id);
-      this.push(me, STOP_TEXT[out.stoppedBy]!, 'warn');
+      this.push(me, STOP_TEXT.CONTACT!, 'warn');
+    } else if (out.stoppedBy === 'BLOCKED') {
+      this.orders.delete(unit.id);
+      // Say what actually stopped the unit: newly revealed terrain is the usual cause.
+      const why =
+        out.blockedBy === 'ENEMY_PRESENT' ? 'Un enemigo oculto en la niebla cortó el camino.'
+          : out.blockedBy === 'IMPASSABLE' ? 'El terreno recién descubierto no se puede cruzar: la ruta se cortó.'
+          : out.blockedBy === 'CITY_NOT_OWNED' ? 'Una ciudad ajena cortó el camino.'
+          : 'El camino quedó bloqueado.';
+      this.push(me, `${UNIT_NAME[unit.type]}: ${why}`, 'warn');
     }
     this.pushEvents(out.events);
   }
