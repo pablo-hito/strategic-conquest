@@ -26,7 +26,7 @@ import {
   type UnitId,
   type UnitTypeId,
 } from '@sc/core';
-import { playBotTurn } from '@sc/ai';
+import { botPersonality, playBotTurn } from '@sc/ai';
 import { STOP_TEXT, UNIT_NAME, playerName } from './labels.js';
 
 /** 'bots': player 1 is you, everyone else is the computer. 'hotseat': all humans. */
@@ -190,20 +190,42 @@ export class GameSession {
     return p.ok ? forecastAttack(this.world, p.value) : null;
   }
 
+  /** Result of the player's latest attack (for the UI's explosion and damage numbers). */
+  lastCombat: CombatResult | null = null;
+
   attack(id: UnitId, target: Coord): string | null {
     const r = this.match.attack(this.viewer, id, target);
     this.invalidate();
     if (!r.ok) return r.error.message;
     this.orders.delete(id);
+    this.lastCombat = r.value.result;
     this.pushEvents(r.value.events);
     return null;
   }
 
-  /** Next own unit that can still act this turn, cycling after `after`. */
-  nextIdleUnit(after?: UnitId): Unit | undefined {
-    const units = this.world
+  /**
+   * Own units still waiting for orders this turn, in the order the player should
+   * handle them: transports first (their cargo moves with them), then other ships,
+   * aircraft, and land units. Troops riding a transport out at sea are left alone;
+   * they only come up when their transport is next to land and they could disembark.
+   */
+  idleUnits(): Unit[] {
+    const { grid } = this.world;
+    const fog = this.match.fogs.get(this.viewer)!;
+    const rank = (u: Unit) =>
+      u.def.cargo?.accepts.includes('land') ? 0 : u.def.domain === 'sea' ? 1 : u.def.domain === 'air' ? 2 : 3;
+    const besideLand = (c: Coord) =>
+      grid.neighbors(c).some((n) => fog.isExplored(grid.index(n)) && grid.isLand(n) && this.world.cityAt(n)?.owner !== this.viewer);
+    return this.world
       .unitsOf(this.viewer)
-      .filter((u) => u.movesLeft > 0 && !this.skipped.has(u.id) && !this.orders.has(u.id));
+      .filter((u) => u.movesLeft > 0 && !this.skipped.has(u.id) && !this.orders.has(u.id))
+      .filter((u) => u.carriedBy === null || (u.def.domain === 'land' && besideLand(u.position) && !this.world.cityAt(u.position)))
+      .sort((a, b) => rank(a) - rank(b));
+  }
+
+  /** Next unit to handle, after `after` in the same order. */
+  nextIdleUnit(after?: UnitId): Unit | undefined {
+    const units = this.idleUnits();
     if (units.length === 0) return undefined;
     const i = after ? units.findIndex((u) => u.id === after) : -1;
     return units[(i + 1) % units.length];
@@ -262,28 +284,47 @@ export class GameSession {
     this.orders.delete(id);
   }
 
-  endTurn(): void {
+  /**
+   * End the human's turn. By default the computer players then play right away; the
+   * UI passes `runBots: false` and steps them with playNextBot() so it can show
+   * progress between bots instead of freezing.
+   */
+  endTurn(opts: { runBots?: boolean } = {}): void {
     const r = this.match.endTurn(this.viewer);
     if (!r.ok) return;
     this.skipped.clear();
     this.pushEvents(r.value.events);
-    this.runBots();
     this.invalidate();
+    if (opts.runBots === false) return;
+    while (this.botToPlay) this.playNextBot();
+    this.handOver();
+  }
+
+  /** The computer player whose turn it is, if any. */
+  get botToPlay(): PlayerId | null {
+    const p = this.match.activePlayer;
+    return p && this.bots.has(p) && this.match.status === 'playing' ? p : null;
+  }
+
+  playNextBot(): void {
+    const p = this.botToPlay;
+    if (!p) return;
+    this.pushEvents(playBotTurn(this.match, p).events);
+    const r = this.match.endTurn(p);
+    if (r.ok) this.pushEvents(r.value.events);
+    this.invalidate();
+  }
+
+  /** After the bots: hide the map for the next human, or (alone) start their turn. */
+  handOver(): void {
     if (this.match.status !== 'playing') return;
-    // Alone against the computer there is nobody to hide the map from.
     if (this.humanCount > 1) this.awaitingHandoff = true;
     else this.beginTurn();
   }
 
-  /** Let every computer player whose turn comes up play it, until a human is next. */
-  private runBots(): void {
-    for (let guard = 0; guard < this.players.length; guard++) {
-      const p = this.match.activePlayer;
-      if (!p || !this.bots.has(p) || this.match.status !== 'playing') return;
-      this.pushEvents(playBotTurn(this.match, p).events);
-      const r = this.match.endTurn(p);
-      if (r.ok) this.pushEvents(r.value.events);
-    }
+  /** How the computer played, revealed at the end of the game. */
+  botStyle(p: PlayerId): string {
+    return botPersonality(this.match, p).label;
   }
 
   /** The next player took the seat: resume their standing orders. */

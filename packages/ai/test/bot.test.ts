@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Grid, Match, PlayerId, WorldState, generateMap, type MapSize } from '@sc/core';
-import { playBotTurn } from '../src/index.js';
+import { botPersonality, playBotTurn, playSimpleBotTurn } from '../src/index.js';
 
 const P1 = PlayerId('p1');
 const P2 = PlayerId('p2');
@@ -108,5 +108,38 @@ describe('playBotTurn', () => {
       match.endTurn(p);
     }
     expect(slowest).toBeLessThan(1000);
+  });
+});
+
+describe('strategic bot', () => {
+  it('plays different personalities on different maps, stable within a match', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 12; i++) {
+      const match = newMatch(`persona-${i}`);
+      const a = botPersonality(match, P2).id;
+      expect(botPersonality(match, P2).id).toBe(a); // stable
+      seen.add(a);
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(3);
+  });
+
+  it('can be forced to a personality', () => {
+    const match = newMatch('persona-forced');
+    playBotTurn(match, P1, { personality: 'fortress' });
+    expect(botPersonality(match, P1).label).toMatch(/Fortaleza/);
+  });
+
+  it('beats the simple bot on a reference map', () => {
+    // Map arena-13 from the bench: a decisive game for the conquistador style.
+    const players = [P1, P2];
+    const map = generateMap({ size: 'small', density: 'normal', seed: 'arena-13' }, players);
+    const { match } = Match.start(map.world, players, undefined, 'arena-13');
+    while (match.status === 'playing' && match.round <= 120) {
+      const p = match.activePlayer!;
+      if (p === P2) playBotTurn(match, p);
+      else playSimpleBotTurn(match, p);
+      match.endTurn(p);
+    }
+    expect(match.winner).toBe(P2);
   });
 });

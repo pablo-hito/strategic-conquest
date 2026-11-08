@@ -47,7 +47,7 @@ const THREAT_RADIUS = 5;
  *  5. fighters scout within half their fuel range and come home.
  * Cities build infantry while their island has work, then transports and escorts.
  */
-export function playBotTurn(match: Match, player: PlayerId): BotReport {
+export function playSimpleBotTurn(match: Match, player: PlayerId): BotReport {
   return new BotTurn(match, player).run();
 }
 
