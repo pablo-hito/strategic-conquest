@@ -171,19 +171,23 @@ Hay dos bots, y los dos juegan con los mismos comandos de `Match` que usa un hum
 
 **Personalidades.** En cada partida el bot juega con una de cuatro, derivada del mapa y su asiento (varía de partida en partida, pero es estable dentro de una misma partida y después de recargar). Cambian el ritmo, la mezcla de producción, cuánto defienden y cómo atacan:
 
-| Personalidad | Expande hasta | Guarnición | Estilo de ataque | Producción de guerra |
-|---|---|---|---|---|
-| Conquistador | ronda 45 | 1 | incursiones continuas | infantería y tanques, destructores, cazas |
-| Relámpago | ronda 30 | 1 | golpe masivo (6) | tanques, mecanizada, apoyo aéreo cercano |
-| Fortaleza | ronda 40 | 2 (todas las ciudades) | golpe masivo (8) | tanques, artillería, antiaéreos, bombarderos |
-| Almirante | ronda 35 | 1 | incursiones continuas | destructores, submarinos, acorazado, portaaviones |
+| Personalidad | Apertura hasta (máx.) | Agresividad (ataca con fuerza ≥) | Guarnición | Estilo de ataque | Producción de guerra |
+|---|---|---|---|---|---|
+| Conquistador | ronda 55 | 0,95 × la del rival | 1 | incursiones continuas | infantería y tanques, destructores, cazas |
+| Relámpago | ronda 40 | 0,7 × | 1 | golpe masivo (6) | tanques, mecanizada, infantería, apoyo aéreo cercano |
+| Fortaleza | ronda 50 | 1,2 × | 2 (todas las ciudades) | golpe masivo (8) | tanques, artillería, antiaéreos, bombarderos |
+| Almirante | ronda 48 | 1,0 × | 1 | incursiones continuas | destructores, submarinos, acorazado, portaaviones |
 
-**Plan de juego.**
-1. *Expansión*: infantería a toda ciudad neutral alcanzable por tierra (máximo 2 exploradores por isla, el resto trabaja), un dron de reconocimiento temprano para descubrir islas, y transportes que llevan infantería a las islas vecinas. Mientras la isla tiene trabajo, las ciudades producen infantería.
-2. *Guerra* (al terminar la ventana de expansión, o antes si hay contacto con el enemigo): producción según la personalidad y objetivo elegido entre las ciudades enemigas conocidas (pocas defensas, cercanía, algo de azar en bloques de 10 rondas para no ser predecible).
+**Plan de juego.** La apertura es igual para todas las personalidades (la única estrategia viable es expandirse lo más rápido posible); la personalidad decide cómo se pelea después.
+1. *Apertura (`grow`)*: infantería a toda ciudad neutral cercana por tierra (una sola unidad por ciudad; si la caminata pasa de 8 turnos, va en barco), drones hasta tener explorado el 80% del mapa, y transportes **según la demanda**: uno cada dos ciudades neutrales conocidas en ultramar y uno cada cuatro soldados ociosos. Ver al enemigo no la termina; termina al quedarse sin ciudades por tomar, al perder una ciudad o al llegar a la ronda máxima de la personalidad.
+2. *Guerra, alternando dos posturas*: cada 8 rondas o más compara su fuerza (ciudades × 10 + ejército en turnos de producción) con la del rival (ciudades conocidas y el ejército visto últimamente, que se olvida de a poco). Si la proporción supera la agresividad de la personalidad (con un margen de ±0,2 que cambia cada 20 rondas, para que no sea predecible) pasa a la **ofensiva**; si no, **consolida**. Perder una ciudad lo pone a consolidar.
+   - *Ofensiva (`attack`)*: el objetivo es una ciudad enemiga (pocas defensas, cercanía, algo de azar) y lo mantiene hasta tomarlo o hasta 25 rondas; los blindados embarcan; los ataques se toman con un margen 20% menor.
+   - *Consolidar (`hold`)*: guarniciones en el frente, producción de guerra y desembarcos sólo sobre ciudades enemigas sin defensores conocidos.
+   - En las dos posturas sigue tomando ciudades neutrales: los transportes que llevan sólo infantería van a las neutrales de ultramar mientras queden.
+   - Al menos el 40% del ejército de tierra puede capturar ciudades (tanques ganan batallas; la infantería, la guerra).
    - *Incursiones*: cada transporte zarpa apenas tiene carga, hacia la costa útil más cercana, prefiriendo ciudades sin defensores conocidos. Presión constante.
    - *Golpe masivo*: la fuerza se reúne en el puerto de concentración (cerca del objetivo y en una isla donde haya tropas) y desembarca toda junta, con a lo sumo 3 turnos de espera: el ataque sorpresa.
-3. *Siempre*: guarnición en ciudades amenazadas, costeras y del frente; respuesta a desembarcos en sus islas; ataques favorables según el margen de la personalidad (nunca suicidas); modo defensivo durante 6 rondas después de perder una ciudad; transportes que huyen de barcos enemigos; destructores que cazan transportes cerca de su costa y escoltan los propios; aviones que atacan lo que alcanzan y vuelven a la base.
+3. *Siempre*: guarnición en ciudades amenazadas y del frente (las costeras tranquilas, sólo cuando ya no quedan neutrales); respuesta a desembarcos cerca de sus ciudades, con a lo sumo 3 unidades por invasor (antes todo el ejército perseguía a cada tanque enemigo de una isla compartida y quedaba paralizado); ataques en grupo: con uno o dos aliados junto al blanco acepta un intercambio peor, porque el siguiente lo remata; ataques favorables según el margen de la personalidad (nunca suicidas); modo defensivo durante 6 rondas después de perder una ciudad; transportes que huyen de barcos enemigos; destructores que cazan transportes cerca de su costa y escoltan los propios; aviones que atacan lo que alcanzan y vuelven a la base.
 
 **Reglas de embarque**: la infantería siempre embarca; los tanques sólo si el transporte ya lleva infantería (toda expedición tiene que poder tomar la ciudad) y sólo cuando el objetivo es enemigo. Las guarniciones prefieren unidades que no capturan, para liberar infantería.
 
@@ -258,7 +262,9 @@ Cómo llegó ahí (cada fila es una corrección medida con la arena):
 | Límite de ejército e infantería más fuerte en ciudades | 11 de 20 | en una partida se congeló 150 rondas: al límite no podía fabricar los transportes que necesitaba |
 | El bot disuelve tropa ociosa cuando está al límite | **15 de 20** | 2 derrotas y 3 empates (adelante en 2); turno más lento 0,64 s |
 
-**Partidas completas a través del visor** (`FULLGAME=1 npx vitest run bench/fullgame.test.ts` en `packages/client`): la sesión del visor con mi asiento jugado por una estrategia guionada agresiva (la del bot anterior) contra el bot real. Con las reglas actuales (límite de ejército, infantería reforzada): en **Normal** el bot ganó 1 de 4 (el guion ganó 2 y la cuarta quedó a su favor): partida pareja. En **Difícil** el bot ganó 3 de 4 (rondas 63 a 123).
+**Revisión de la apertura (noviembre 2026).** Una partida real contra el Relámpago fue demasiado fácil: cortaba la expansión en la ronda 30 (o al ver al rival después de la ronda 15) y llenaba el ejército de tanques que no capturan. Con duelos entre bots (`DUEL=1 A=new:blitz B=old:conquistador npx vitest run bench/duel.test.ts` en `packages/ai`, mapa chico, 4 mapas × 2 asientos) se encontraron además 49 infanterías sin un solo transporte nuevo (todas "respondiendo a una invasión" o caminando a la misma ciudad neutral) y mapas con 16 ciudades neutrales sin tomar en la ronda 250. Después de los cambios: el bot nuevo contra el anterior ganó **12 a 0** en 24 partidas (las otras 12 llegaron a la ronda 250 sin ganador); para la ronda 40 el mapa está casi repartido; entre personalidades nuevas, partidas parejas.
+
+**Partidas completas a través del visor** (`FULLGAME=1 npx vitest run bench/fullgame.test.ts` en `packages/client`): la sesión del visor con mi asiento jugado por una estrategia guionada agresiva (la del bot anterior) contra el bot real. Con las reglas actuales (límite de ejército, infantería reforzada): en **Normal** el bot ganó 1 de 4 (el guion ganó 2 y la cuarta quedó a su favor): partida pareja. En **Difícil** el bot ganó 3 de 4 (rondas 63 a 123). Con la apertura nueva, en **Normal** el bot ganó **4 de 4** (rondas 64 a 138, terminando con 32 ciudades contra 9 o 10).
 
 **Rendimiento**: 125 ms por ronda de promedio en el navegador (turno del bot incluido) en mapa chico; el turno más lento medido en partidas largas, 1,3 s.
 

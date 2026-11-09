@@ -9,8 +9,18 @@ export interface Personality {
   readonly id: PersonalityId;
   /** Name shown to the player at the end of the game ("the bot played as..."). */
   readonly label: string;
-  /** Rounds spent mostly expanding before arming in earnest (unless attacked first). */
+  /**
+   * Latest round of the opening. Every personality opens the same way (grab every
+   * neutral city it can, as fast as it can); the opening ends earlier when there is
+   * nothing left to grab or a city is lost.
+   */
   readonly expandUntil: number;
+  /**
+   * After the opening the bot alternates between attacking and consolidating,
+   * re-reading the balance of power every few rounds. It attacks when its strength is
+   * at least this × the enemy's (lower = more aggressive).
+   */
+  readonly aggression: number;
   /** Production while grabbing neutral cities. */
   readonly expandMix: Mix;
   /** Production once the map is claimed or the enemy is known. */
@@ -38,7 +48,8 @@ export const PERSONALITIES: Readonly<Record<PersonalityId, Personality>> = {
   conquistador: {
     id: 'conquistador',
     label: 'Conquistador (expansión rápida)',
-    expandUntil: 45,
+    expandUntil: 55,
+    aggression: 0.95,
     expandMix: { infantry: 6, transport: 2, recon_drone: 1, destroyer: 1 },
     warMix: { infantry: 4, mech_infantry: 2, heavy_tank: 3, transport: 2, destroyer: 2, fighter: 2 },
     garrison: 1,
@@ -51,10 +62,11 @@ export const PERSONALITIES: Readonly<Record<PersonalityId, Personality>> = {
   // Arms early and goes for the throat: armor + close air support in one big landing.
   blitz: {
     id: 'blitz',
-    label: 'Relámpago (ataque temprano)',
-    expandUntil: 30,
-    expandMix: { infantry: 5, transport: 2, recon_drone: 1, heavy_tank: 1 },
-    warMix: { heavy_tank: 4, mech_infantry: 3, infantry: 2, cas: 2, fighter: 1, transport: 2, destroyer: 1 },
+    label: 'Relámpago (ofensivas agresivas)',
+    expandUntil: 40,
+    aggression: 0.7,
+    expandMix: { infantry: 6, transport: 2, recon_drone: 1 },
+    warMix: { heavy_tank: 3, mech_infantry: 3, infantry: 3, cas: 2, fighter: 1, transport: 2, destroyer: 1 },
     garrison: 1,
     strikeStyle: 'massed',
     strikeSize: 6,
@@ -66,7 +78,8 @@ export const PERSONALITIES: Readonly<Record<PersonalityId, Personality>> = {
   fortress: {
     id: 'fortress',
     label: 'Fortaleza (defensa y golpe tardío)',
-    expandUntil: 40,
+    expandUntil: 50,
+    aggression: 1.2,
     expandMix: { infantry: 6, transport: 2, recon_drone: 1, anti_air: 1 },
     warMix: { infantry: 3, heavy_tank: 4, artillery: 1, anti_air: 1, fighter: 2, strategic_bomber: 1, transport: 2, destroyer: 1 },
     garrison: 2,
@@ -80,7 +93,8 @@ export const PERSONALITIES: Readonly<Record<PersonalityId, Personality>> = {
   admiral: {
     id: 'admiral',
     label: 'Almirante (dominio naval)',
-    expandUntil: 35,
+    expandUntil: 48,
+    aggression: 1.0,
     expandMix: { infantry: 5, transport: 2, destroyer: 2, recon_drone: 1 },
     warMix: { infantry: 3, heavy_tank: 3, transport: 2, destroyer: 3, submarine: 2, battleship: 1, carrier: 1, fighter: 2 },
     garrison: 1,

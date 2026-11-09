@@ -37,6 +37,16 @@ const THREAT_RADIUS = 5;
 const MAX_STAGING_WAIT = 3;
 
 export type Phase = 'expand' | 'war';
+/** grow: the opening land grab. attack / hold: the war, alternating with the balance of power. */
+export type Stance = 'grow' | 'attack' | 'hold';
+/** A war stance is kept at least this long before the balance is re-read. */
+const MIN_STANCE_ROUNDS = 8;
+/** Responders sent against each enemy unit that lands on our island. */
+const RESPONDERS_PER_INVADER = 3;
+/** A neutral city further than this on foot is left to the boats (infantry is slow). */
+const MAX_WALK_TURNS = 8;
+/** Neutral cities within this distance of an own capturer on the same island count as "on foot". */
+const WALK_RADIUS = 16;
 
 export interface BotOptions {
   /** Force a personality (otherwise derived from the match, so it varies per game). */
@@ -47,10 +57,13 @@ export interface BotOptions {
 
 export interface BotDebugInfo {
   readonly phase: Phase;
+  readonly stance: Stance;
   readonly target: Coord | null;
   readonly staging: Coord | null;
   readonly waiting: number;
   readonly garrison: number;
+  /** What each unit ended up doing this turn (counts per decision). */
+  readonly decisions: Readonly<Record<string, number>>;
 }
 
 /**
@@ -70,6 +83,12 @@ interface Memory {
   citiesLast: number;
   /** Until this round the bot fights defensively after losing a city. */
   alertUntil: number;
+  stance: Stance;
+  stanceSince: number;
+  /** Round the current objective was chosen: an offensive sticks to it for a while. */
+  targetSince: number;
+  /** Decaying memory of the enemy army seen (value in build turns): out of sight is not gone. */
+  enemyArmySeen: number;
 }
 
 const memories = new WeakMap<Match, Map<PlayerId, Memory>>();
@@ -91,6 +110,10 @@ function memoryFor(match: Match, player: PlayerId, opts: BotOptions): Memory {
       idleLast: 0,
       citiesLast: match.world.citiesOf(player).length,
       alertUntil: 0,
+      stance: 'grow',
+      stanceSince: 0,
+      targetSince: 0,
+      enemyArmySeen: 0,
     };
     byPlayer.set(player, m);
   }
@@ -133,6 +156,11 @@ class StrategicTurn {
   private readonly p: Personality;
   private readonly rng: Rng;
   private phase: Phase = 'expand';
+  /** Attack stance: strike forces sail for enemy cities and fights are taken more readily. */
+  private offensive = false;
+  private exploredShare = 0;
+  /** Land units already sent against each invader this turn. */
+  private readonly responders = new Map<UnitId, number>();
 
   // Board knowledge, rebuilt every turn from the fog map only.
   private landmass = new Int32Array(0);
@@ -146,6 +174,9 @@ class StrategicTurn {
   private readonly explorers = new Map<number, number>();
   private readonly waiting = new Set<UnitId>();
   private staging: Coord | null = null;
+  private readonly decisions: Record<string, number> = {};
+  /** Cities already chosen as a destination this turn, and by how many units. */
+  private readonly claimed = new Map<string, number>();
 
   constructor(
     private readonly match: Match,
@@ -187,12 +218,18 @@ class StrategicTurn {
     this.mem.citiesLast = this.world.citiesOf(this.me).length;
     this.debug?.({
       phase: this.phase,
+      stance: this.mem.stance,
       target: this.mem.target,
       staging: this.staging,
       waiting: this.waiting.size,
       garrison: this.garrison.size,
+      decisions: this.decisions,
     });
     return this.report();
+  }
+
+  private note(what: string): void {
+    this.decisions[what] = (this.decisions[what] ?? 0) + 1;
   }
 
   private report(): BotReport {
@@ -204,8 +241,12 @@ class StrategicTurn {
   private analyze(): void {
     const { grid } = this.world;
     this.unexplored = [];
+    let explored = 0;
     for (let i = 0; i < grid.size; i++) {
-      if (this.fog.isExplored(i)) continue;
+      if (this.fog.isExplored(i)) {
+        explored++;
+        continue;
+      }
       const c = grid.coordOf(i);
       if (grid.neighbors(c).some((n) => this.fog.isExplored(grid.index(n)))) this.unexplored.push(c);
     }
@@ -234,6 +275,7 @@ class StrategicTurn {
       this.frontierOf.set(m, [...frontier.values()]);
     }
     this.landmass = label;
+    this.exploredShare = explored / grid.size;
 
     for (const c of this.fog.knownCities.values()) {
       if (this.world.city(c.id)?.owner === this.me) continue; // own cities are always known
@@ -294,21 +336,37 @@ class StrategicTurn {
     const cities = this.ownCities().length;
     if (cities < this.mem.citiesLast) this.mem.alertUntil = round + 6; // we just lost a city
 
-    // Unexplored map is room to expand too: not knowing a city is not the same as
-    // there being none.
-    const expansionLeft =
-      this.knownNeutral().length > 0 ||
-      [...this.ownMasses()].some((m) => (this.frontierOf.get(m)?.length ?? 0) > 0) ||
-      this.unexplored.length > 0;
-    const contact = this.knownEnemyCities().length > 0 || this.enemies.some((e) => e.def.domain === 'land');
-    this.phase = round < this.p.expandUntil && expansionLeft && !(contact && round > this.p.expandUntil / 2) ? 'expand' : 'war';
+    const seen = this.enemies.reduce((n, e) => n + (e.def.attack > 0 ? UNIT_TYPES[e.type].buildTurns : 0), 0);
+    this.mem.enemyArmySeen = Math.max(seen, this.mem.enemyArmySeen * 0.97);
+
+    if (this.mem.stance === 'grow') {
+      // The opening is the same for every personality: grab land while there is land
+      // to grab. Meeting the enemy doesn't end it; losing a city or running out does.
+      // Unexplored map is room to expand too: not knowing a city is not the same as
+      // there being none.
+      const nothingLeft = this.knownNeutral().length === 0 && this.exploredShare >= 0.7;
+      if (nothingLeft || round >= this.p.expandUntil || round < this.mem.alertUntil) this.setStance(this.readBalance());
+    } else if (round - this.mem.stanceSince >= MIN_STANCE_ROUNDS || (round < this.mem.alertUntil && this.mem.stance === 'attack')) {
+      const next = round < this.mem.alertUntil ? 'hold' : this.readBalance();
+      if (next !== this.mem.stance) this.setStance(next);
+    }
+    this.phase = this.mem.stance === 'grow' ? 'expand' : 'war';
+    this.offensive = this.mem.stance === 'attack';
 
     // Re-evaluated every turn (the board changes), with randomness that only shifts
     // every 10 rounds so the bot commits to an objective instead of zigzagging.
     const previous = this.mem.target;
-    this.mem.target = this.chooseTarget();
-    if (!this.mem.target || !previous || previous.x !== this.mem.target.x || previous.y !== this.mem.target.y) {
-      this.mem.stagingSince = null;
+    const keep =
+      previous &&
+      this.offensive &&
+      round - this.mem.targetSince < 25 &&
+      this.knownEnemyCities().some((c) => c.x === previous.x && c.y === previous.y);
+    if (!keep) {
+      this.mem.target = this.chooseTarget();
+      if (!this.mem.target || !previous || previous.x !== this.mem.target.x || previous.y !== this.mem.target.y) {
+        this.mem.stagingSince = null;
+        this.mem.targetSince = round;
+      }
     }
 
     // Staging port: a coastal city close to the target AND on an island where the
@@ -325,6 +383,29 @@ class StrategicTurn {
       const score = (c: City) => this.dist(c.position, target) - 2 * Math.min(10, troopsOn.get(this.massOf(c.position)) ?? 0);
       this.staging = ports.sort((a, b) => score(a) - score(b))[0]?.position ?? null;
     }
+  }
+
+  private setStance(stance: Stance): void {
+    this.mem.stance = stance;
+    this.mem.stanceSince = this.match.round;
+  }
+
+  /**
+   * Attack or hold? Compares cities (production) and armies (own counted exactly, the
+   * enemy's from what has been seen lately), against the personality's threshold.
+   * The threshold drifts a little every 20 rounds so the bot's mood is not predictable:
+   * the same position may bring an offensive in one game and a build-up in another.
+   */
+  private readBalance(): Stance {
+    const enemyCities = this.knownEnemyCities().length;
+    if (enemyCities === 0 && this.mem.enemyArmySeen === 0) return 'attack'; // nobody found yet: raid and scout
+    const army = this.world
+      .unitsOf(this.me)
+      .reduce((n, u) => n + (u.def.attack > 0 ? UNIT_TYPES[u.type].buildTurns : 0), 0);
+    const mine = this.ownCities().length * 10 + army;
+    const theirs = Math.max(1, enemyCities * 10 + this.mem.enemyArmySeen);
+    const mood = (new Rng(`mood:${this.me}:${Math.floor(this.match.round / 20)}`).next() - 0.5) * 0.4;
+    return mine / theirs >= this.p.aggression + mood ? 'attack' : 'hold';
   }
 
   /**
@@ -367,9 +448,14 @@ class StrategicTurn {
 
   private manageProduction(): void {
     const units = this.world.unitsOf(this.me);
-    const counts = new Map<UnitTypeId, number>();
-    for (const u of units) counts.set(u.type, (counts.get(u.type) ?? 0) + 1);
     const cities = this.ownCities();
+    // Count what is already being built as if it existed: two cities must not both
+    // start the one transport that was missing.
+    const counts = new Map<UnitTypeId, number>();
+    const add = (t: UnitTypeId) => counts.set(t, (counts.get(t) ?? 0) + 1);
+    for (const u of units) add(u.type);
+    for (const c of cities) if (c.production && c.production.progress > 0) add(c.production.unit);
+
     const alert = this.match.round < this.mem.alertUntil;
     const mix: Mix = { ...(this.phase === 'expand' ? this.p.expandMix : this.p.warMix) };
     if (alert) {
@@ -377,36 +463,58 @@ class StrategicTurn {
       mix.heavy_tank = (mix.heavy_tank ?? 0) + 2;
     }
     if (this.enemies.some((e) => e.def.domain === 'air')) mix.anti_air = (mix.anti_air ?? 0) + 1;
-    const transportCap = Math.max(1, Math.min(6, Math.ceil(this.mem.idleLast / 3) + (this.phase === 'war' ? 1 : 0)));
 
-    // Eyes first: a recon drone finds islands and the enemy far faster than infantry.
-    const drones = counts.get('recon_drone') ?? 0;
-    const wantDrones = Math.max(1, this.p.drones);
-    let droneQueued = cities.some((c) => c.production?.unit === 'recon_drone' && c.production.progress > 0);
+    // Boats on demand: one per couple of neutral cities overseas, and enough for the
+    // troops that had nothing to do last turn. The war adds the strike force's lift.
+    const overseas = this.overseasNeutral().length;
+    let wantTransports = Math.max(overseas > 0 ? Math.ceil(overseas / 2) : 0, Math.ceil(this.mem.idleLast / 4));
+    if (this.phase === 'war' && this.knownEnemyCities().length > 0) wantTransports = Math.max(wantTransports, this.offensive ? 2 : 1);
+    wantTransports = Math.min(wantTransports, 2 + Math.floor(cities.length / 3), 8);
 
-    for (const city of cities) {
+    // Eyes first: recon drones find islands and the enemy far faster than infantry.
+    const wantDrones = this.unexplored.length === 0 ? 0 : this.exploredShare < 0.8 ? Math.max(2, this.p.drones) : this.p.drones;
+
+    // Coastal cities with troops on their island build the boats.
+    const landOn = new Map<number, number>();
+    for (const u of units) {
+      if (u.def.domain !== 'land' || u.carriedBy !== null) continue;
+      const m = this.massOf(u.position);
+      landOn.set(m, (landOn.get(m) ?? 0) + 1);
+    }
+    const shipyardScore = (c: City) => (c.isCoastal ? 100 : 0) + (landOn.get(this.massOf(c.position)) ?? 0);
+    const order = [...cities].sort((a, b) => shipyardScore(b) - shipyardScore(a));
+
+    for (const city of order) {
       if (city.production && city.production.progress > 0) continue; // never waste progress
-      if (!droneQueued && drones < wantDrones && this.unexplored.length > 0 && (counts.get('infantry') ?? 0) >= 2) {
-        droneQueued = true;
-        counts.set('recon_drone', drones + 1);
-        if (city.production?.unit !== 'recon_drone') this.match.setProduction(this.me, city.id, 'recon_drone');
-        continue;
-      }
+      let want: UnitTypeId | null = null;
       // A city with no garrison and enemies nearby builds a defender first.
       const garrisoned = this.world.unitsAt(city.position).some((u) => u.owner === this.me && u.def.domain === 'land');
-      let want: UnitTypeId | null = null;
       if (!garrisoned && this.threatsNear(city.position).length > 0) want = 'infantry';
-      // Land still to take on this island: infantry (and the odd tank) gets it fastest.
-      if (!want && this.islandHasWork(city) && !alert) {
-        const blitzTank = this.p.id === 'blitz' && (counts.get('infantry') ?? 0) % 3 === 2;
-        want = blitzTank ? 'heavy_tank' : 'infantry';
-      }
-      if (!want) want = this.pickFromMix(city, mix, counts, transportCap);
-      if (!want) continue;
-      counts.set(want, (counts.get(want) ?? 0) + 1);
+      if (!want && (counts.get('recon_drone') ?? 0) < wantDrones && (counts.get('infantry') ?? 0) >= 2) want = 'recon_drone';
+      if (!want && city.isCoastal && (counts.get('transport') ?? 0) < wantTransports && (counts.get('infantry') ?? 0) >= 2) want = 'transport';
+      // Land still to take on this island: infantry gets it fastest.
+      if (!want && !alert && this.islandHasWork(city)) want = 'infantry';
+      if (!want && this.phase === 'expand') want = 'infantry';
+      if (!want) want = this.pickFromMix(city, mix, counts);
+      if (!want || !city.canProduce(want).ok) continue;
+      add(want);
       if (city.production?.unit !== want) this.match.setProduction(this.me, city.id, want);
     }
   }
+
+  /**
+   * Known neutral cities that need a boat: none of our troops can walk there, or the
+   * walk is long (infantry crawls; a transport sails 6 a turn).
+   */
+  private overseasNeutral(): Coord[] {
+    if (this.overseasCache) return this.overseasCache;
+    const walkers = this.world
+      .unitsOf(this.me)
+      .filter((u) => u.def.domain === 'land' && u.carriedBy === null && u.def.canCaptureCities);
+    const onFoot = (c: Coord) => walkers.some((u) => this.massOf(u.position) === this.massOf(c) && this.dist(u.position, c) <= WALK_RADIUS);
+    return (this.overseasCache = this.knownNeutral().filter((c) => !onFoot(c)));
+  }
+  private overseasCache: Coord[] | null = null;
 
   /** Neutral cities left on this island, or fog to clear and too few troops to clear it. */
   private islandHasWork(city: City): boolean {
@@ -417,20 +525,34 @@ class StrategicTurn {
     return troops < 3;
   }
 
-  /** Unit whose share of the army is furthest below the mix, among what this city can build. */
-  private pickFromMix(city: City, mix: Mix, counts: Map<UnitTypeId, number>, transportCap: number): UnitTypeId | null {
+  /**
+   * Unit whose share of the army is furthest below the mix, among what this city can
+   * build. Transports and drones are decided by demand, not by the mix. At least 40% of
+   * the land army can take cities: tanks win battles, infantry wins the war.
+   */
+  private pickFromMix(city: City, mix: Mix, counts: Map<UnitTypeId, number>): UnitTypeId | null {
     const total = [...counts.values()].reduce((a, b) => a + b, 0) + 1;
     const weightSum = Object.values(mix).reduce((a, b) => a + (b ?? 0), 0);
     let best: UnitTypeId | null = null;
     let bestGap = -Infinity;
     for (const [type, w] of Object.entries(mix) as [UnitTypeId, number][]) {
+      if (type === 'transport' || type === 'recon_drone') continue;
       if (!city.canProduce(type).ok) continue;
+      if (UNIT_TYPES[type].domain === 'sea' && !city.isCoastal) continue;
       const have = counts.get(type) ?? 0;
-      if (type === 'transport' && have >= transportCap) continue;
-      if (type === 'recon_drone' && have >= this.p.drones) continue;
       if ((type === 'carrier' || type === 'battleship') && have >= Math.ceil(this.ownCities().length / 8)) continue;
       const gap = w / weightSum - have / total + this.rng.next() * 0.02;
       if (gap > bestGap) [best, bestGap] = [type, gap];
+    }
+    if (best && UNIT_TYPES[best].domain === 'land' && !UNIT_TYPES[best].canCaptureCities) {
+      let land = 0;
+      let capturers = 0;
+      for (const [t, n] of counts) {
+        if (UNIT_TYPES[t].domain !== 'land') continue;
+        land += n;
+        if (UNIT_TYPES[t].canCaptureCities) capturers += n;
+      }
+      if (capturers < 0.4 * (land + 1)) best = (mix.mech_infantry ?? 0) > 0 && (counts.get('mech_infantry') ?? 0) < (counts.get('infantry') ?? 0) / 2 ? 'mech_infantry' : 'infantry';
     }
     return best ?? (city.canProduce('infantry').ok ? 'infantry' : null);
   }
@@ -449,18 +571,21 @@ class StrategicTurn {
       // Interior cities stay empty so every soldier is out working, except for the
       // fortress personality, which holds everything it owns.
       // Coastal cities are always exposed to landings once the war is on.
+      // While neutral cities are left, soldiers are worth more taking them than
+      // guarding quiet coasts.
+      const quietCoast = city.isCoastal && this.knownNeutral().length === 0;
       let want = 0;
       if (threatened) want = this.p.garrison + 1;
-      else if (this.phase === 'war' && (frontline || city.isCoastal || this.p.id === 'fortress')) want = this.p.garrison;
+      else if (this.phase === 'war' && (frontline || quietCoast || this.p.id === 'fortress')) want = this.p.garrison;
       if (want === 0) continue;
       const near = land
         .filter((u) => !taken.has(u.id) && this.dist(u.position, city.position) <= 6 && this.massOf(u.position) === this.massOf(city.position))
         // Prefer units already inside (dug in), and units that can't take cities:
         // infantry is what expeditions need.
-        .sort((a, b) =>
-          this.dist(a.position, city.position) - this.dist(b.position, city.position) ||
-          Number(!!a.def.canCaptureCities) - Number(!!b.def.canCaptureCities),
-        )
+        .sort((a, b) => {
+          const inside = Number(this.dist(b.position, city.position) === 0) - Number(this.dist(a.position, city.position) === 0);
+          return inside || Number(!!a.def.canCaptureCities) - Number(!!b.def.canCaptureCities) || this.dist(a.position, city.position) - this.dist(b.position, city.position);
+        })
         .slice(0, want);
       for (const u of near) {
         taken.add(u.id);
@@ -497,6 +622,7 @@ class StrategicTurn {
     if (!u || u.movesLeft <= 0) return;
 
     if (this.garrison.has(id)) {
+      this.note('land:garrison');
       // Stay put (and dig in) unless something can be killed next door.
       const home = this.nearest(u.position, this.ownCities());
       if (home && this.dist(home.position, u.position) > 0) this.moveToward(u, home.position);
@@ -504,24 +630,36 @@ class StrategicTurn {
     }
 
     // Enemies on our island: everyone available answers.
-    if (this.respondToInvasion(u)) return;
+    if (this.respondToInvasion(u)) return this.note('land:invasion');
 
-    if (u.def.canCaptureCities && this.captureOverland(u, this.phase === 'war' ? 'any' : 'neutral')) return;
-    if (this.phase === 'war' && this.marchOnTarget(u)) return;
-    if (this.explore(u, true)) return;
+    if (u.def.canCaptureCities && this.captureOverland(u, this.offensive ? 'any' : 'neutral')) return this.note('land:capture');
+    if ((this.offensive || this.match.round < this.mem.alertUntil) && this.marchOnTarget(u)) return this.note('land:march');
+    if (this.explore(u, true)) return this.note('land:explore');
 
     // Nothing to do on this island: get on a boat (or walk to the staging port).
+    this.note('land:wait');
     this.waiting.add(id);
     this.boardOrGather(u);
   }
 
   private respondToInvasion(u: Unit): boolean {
+    // A few units answer each invader near our cities; the rest keep working
+    // (chasing every enemy tank around a shared island froze whole armies).
     const mass = this.massOf(u.position);
+    const cities = this.ownCities();
     const invaders = this.enemies
-      .filter((e) => e.def.domain === 'land' && this.massOf(e.position) === mass && this.dist(e.position, u.position) <= 10)
+      .filter(
+        (e) =>
+          e.def.domain === 'land' &&
+          this.massOf(e.position) === mass &&
+          this.dist(e.position, u.position) <= 10 &&
+          (this.responders.get(e.id) ?? 0) < RESPONDERS_PER_INVADER &&
+          cities.some((c) => this.dist(c.position, e.position) <= 6),
+      )
       .sort((a, b) => this.dist(u.position, a.position) - this.dist(u.position, b.position));
     for (const e of invaders.slice(0, 2)) {
       if (this.moveToBeside(u, e.position)) {
+        this.responders.set(e.id, (this.responders.get(e.id) ?? 0) + 1);
         this.tryAttack(u.id);
         return true;
       }
@@ -542,8 +680,15 @@ class StrategicTurn {
       .slice(0, MAX_PATH_TRIES);
     for (const c of candidates) {
       if (defended(c)) continue;
+      // One soldier per neutral city is enough; enemy cities get a small squad.
+      const neutral = (this.world.cityAt(c) && this.fog.knownCities.get(this.world.cityAt(c)!.id)?.owner) == null;
+      const key = `${c.x},${c.y}`;
+      if ((this.claimed.get(key) ?? 0) >= (neutral ? 1 : 4)) continue;
       const path = findPath(this.known, u, c, { maxTurns: LOCAL_SEARCH_TURNS });
-      if (path && this.isOverland(path, ashore)) return this.follow(u, path);
+      if (!path || !this.isOverland(path, ashore)) continue;
+      if (neutral && !ashore && path.turns > MAX_WALK_TURNS) continue; // a boat gets there sooner
+      this.claimed.set(key, (this.claimed.get(key) ?? 0) + 1);
+      return this.follow(u, path);
     }
     return false;
   }
@@ -582,7 +727,7 @@ class StrategicTurn {
 
   private boardOrGather(u: Unit): void {
     // Armor only ships out to fight: neutral cities need infantry, not tanks.
-    if (!u.def.canCaptureCities && !(this.phase === 'war' && this.targetIsEnemy())) return;
+    if (!u.def.canCaptureCities && !(this.offensive && this.targetIsEnemy())) return;
     const mass = this.massOf(u.position);
     const touches = (c: Coord) =>
       this.massOf(c) === mass || this.world.grid.neighbors(c).some((n) => this.massOf(n) === mass);
@@ -605,7 +750,7 @@ class StrategicTurn {
     }
     // Massed strikes gather at the staging port; otherwise troops go to the nearest transport.
     const goal =
-      this.p.strikeStyle === 'massed' && this.phase === 'war' && this.staging && this.massOf(this.staging) === mass
+      this.p.strikeStyle === 'massed' && this.offensive && this.staging && this.massOf(this.staging) === mass
         ? this.staging
         : this.nearest(u.position, ships)?.position;
     if (goal && this.dist(goal, u.position) > 0) this.moveToward(u, goal);
@@ -659,7 +804,11 @@ class StrategicTurn {
 
     // Raids (and all expansion): sail as soon as there is a useful load. Massed war:
     // wait at the staging port until the strike force is aboard (the surprise attack).
-    const massed = this.p.strikeStyle === 'massed' && this.phase === 'war' && this.targetIsEnemy();
+    // Boats carrying only infantry keep taking neutral cities while any are left
+    // overseas; the strike force is whatever else is aboard.
+    const cargoUnits = t.cargo.map((id) => this.world.unit(id)).filter((x): x is Unit => !!x);
+    const expedition = cargoUnits.every((x) => x.def.canCaptureCities) && this.overseasNeutral().length > 0 && !this.isStaging(t);
+    const massed = this.p.strikeStyle === 'massed' && this.offensive && this.targetIsEnemy() && !expedition;
     if (massed && this.mem.target && this.staging && this.dist(t.position, this.staging) <= 1) {
       const aboardAtStaging = this.world
         .unitsOf(this.me)
@@ -677,17 +826,14 @@ class StrategicTurn {
 
     // Where this boat can be useful depends on who is aboard: infantry can take any
     // city, armor only has business where the enemy is.
-    const cargo = t.cargo.map((id) => this.world.unit(id)).filter((x): x is Unit => !!x);
-    const canCapture = cargo.some((x) => x.def.canCaptureCities);
+    const canCapture = cargoUnits.some((x) => x.def.canCaptureCities);
     // Massed strikes all go for the shared objective; raiders each pick the nearest
     // useful shore, preferring cities with no known defenders.
     const goal = massed && this.mem.target ? this.mem.target : null;
     const defended = (c: Coord) => this.enemies.some((e) => e.def.domain === 'land' && this.dist(e.position, c) <= 1);
-    const targets = [
-      ...(goal ? [goal] : []),
-      ...(canCapture ? this.knownNeutral().filter((c) => !this.ownMasses().has(this.massOf(c))) : []),
-      ...this.knownEnemyCities(),
-    ];
+    // On hold, only undefended enemy cities are worth a landing.
+    const enemyCities = this.offensive ? this.knownEnemyCities() : this.knownEnemyCities().filter((c) => !defended(c));
+    const targets = [...(goal ? [goal] : []), ...(canCapture ? this.overseasNeutral() : []), ...enemyCities];
     const ordered = [...new Set(targets)].sort((a, b) =>
       a === goal ? -1 : b === goal ? 1 : Number(defended(a)) - Number(defended(b)) || this.dist(t.position, a) - this.dist(t.position, b),
     );
@@ -700,12 +846,16 @@ class StrategicTurn {
     const waiting = [...this.waiting].map((w) => this.world.unit(w)).filter((w): w is Unit => !!w && w.carriedBy === null);
     const ports = this.ownCities().filter((c) => c.isCoastal);
     let port: Coord | undefined;
-    if (this.p.strikeStyle === 'massed' && this.phase === 'war' && this.staging) port = this.staging;
+    if (this.p.strikeStyle === 'massed' && this.offensive && this.staging && this.overseasNeutral().length === 0) port = this.staging;
     else {
       const anchor = this.nearest(t.position, waiting);
       port = anchor ? this.nearest(anchor.position, ports)?.position : undefined;
     }
     if (port && this.dist(port, t.position) > 0) this.moveToward(t, port);
+  }
+
+  private isStaging(t: Unit): boolean {
+    return !!this.staging && this.offensive && this.dist(t.position, this.staging) <= 1;
   }
 
   /** Approach a target city from the side with the fewest known enemies. */
@@ -756,7 +906,7 @@ class StrategicTurn {
     if (convoy && u.type !== 'submarine' && this.dist(convoy.position, u.position) > 1 && this.hunt(u, convoy.position)) return;
 
     // 3. In war, take the fight to the enemy coast (battleships shell it from range).
-    if (this.phase === 'war') {
+    if (this.offensive) {
       const coast = (this.mem.target ? [this.mem.target] : this.knownEnemyCities().sort((a, b) => this.dist(u.position, a) - this.dist(u.position, b))).slice(0, 2);
       for (const c of coast) if (this.hunt(u, c)) return;
     }
@@ -826,7 +976,8 @@ class StrategicTurn {
     const u = this.alive(id);
     if (!u || u.def.attack <= 0 || u.attackedThisTurn || u.movesLeft <= 0) return false;
     const reach = u.def.attackRange?.max ?? 1;
-    const edge = this.match.round < this.mem.alertUntil ? Math.min(this.p.attackEdge, 1) : this.p.attackEdge;
+    let edge = this.match.round < this.mem.alertUntil ? Math.min(this.p.attackEdge, 1) : this.p.attackEdge;
+    if (this.offensive) edge *= 0.8;
     let best: { at: Coord; score: number } | null = null;
     for (const e of this.enemies) {
       if (!this.world.unit(e.id)) continue;
@@ -837,7 +988,13 @@ class StrategicTurn {
       const kills = plan.value.defender !== null && f.damageToDefender >= plan.value.defender.hp;
       const taken = f.damageToAttacker + f.interceptionDamage;
       if (taken >= u.hp) continue; // never suicidal
-      if (!kills && f.damageToDefender < taken * edge) continue;
+      // Ganging up: with friends next to the target, wearing it down is worth a trade
+      // (the next attacker finishes it).
+      const friends = this.world
+        .unitsOf(this.me)
+        .filter((x) => x.id !== id && x.def.attack > 0 && !x.attackedThisTurn && x.movesLeft > 0 && this.dist(x.position, e.position) <= (x.def.attackRange?.max ?? 1)).length;
+      const localEdge = friends >= 2 ? edge * 0.5 : friends === 1 ? edge * 0.75 : edge;
+      if (!kills && f.damageToDefender < taken * localEdge) continue;
       const value = plan.value.defender ? UNIT_TYPES[plan.value.defender.type].buildTurns : 0;
       const score = f.damageToDefender - taken + (kills ? 4 + value / 2 : 0);
       if (!best || score > best.score) best = { at: e.position, score };
