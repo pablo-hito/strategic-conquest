@@ -194,6 +194,11 @@ class StrategicTurn {
     return this.match.world;
   }
 
+  /** Map area relative to the small map (1 small, ~2.7 medium, ~6.7 huge). */
+  private get scale(): number {
+    return this.world.grid.size / 2400;
+  }
+
   run(): BotReport {
     if (this.match.activePlayer !== this.me) return this.report();
     this.analyze();
@@ -345,7 +350,9 @@ class StrategicTurn {
       // Unexplored map is room to expand too: not knowing a city is not the same as
       // there being none.
       const nothingLeft = this.knownNeutral().length === 0 && this.exploredShare >= 0.7;
-      if (nothingLeft || round >= this.p.expandUntil || round < this.mem.alertUntil) this.setStance(this.readBalance());
+      // Bigger maps take longer to claim: the opening stretches with the map.
+      const openingEnds = Math.round(this.p.expandUntil * Math.sqrt(this.scale));
+      if (nothingLeft || round >= openingEnds || round < this.mem.alertUntil) this.setStance(this.readBalance());
     } else if (round - this.mem.stanceSince >= MIN_STANCE_ROUNDS || (round < this.mem.alertUntil && this.mem.stance === 'attack')) {
       const next = round < this.mem.alertUntil ? 'hold' : this.readBalance();
       if (next !== this.mem.stance) this.setStance(next);
@@ -469,10 +476,15 @@ class StrategicTurn {
     const overseas = this.overseasNeutral().length;
     let wantTransports = Math.max(overseas > 0 ? Math.ceil(overseas / 2) : 0, Math.ceil(this.mem.idleLast / 4));
     if (this.phase === 'war' && this.knownEnemyCities().length > 0) wantTransports = Math.max(wantTransports, this.offensive ? 2 : 1);
-    wantTransports = Math.min(wantTransports, 2 + Math.floor(cities.length / 3), 8);
+    wantTransports = Math.min(wantTransports, 2 + Math.floor(cities.length / 2));
 
-    // Eyes first: recon drones find islands and the enemy far faster than infantry.
-    const wantDrones = this.unexplored.length === 0 ? 0 : this.exploredShare < 0.8 ? Math.max(2, this.p.drones) : this.p.drones;
+    // Eyes first: recon drones find islands and the enemy far faster than infantry,
+    // and a big map needs more of them.
+    const scouts = Math.max(2, this.p.drones, Math.round(2 * this.scale ** 0.7));
+    const wantDrones = this.unexplored.length === 0 ? 0 : this.exploredShare < 0.8 ? scouts : this.p.drones;
+    // Troops already waiting for a boat: more infantry would only pile up on the docks.
+    const surplus = this.mem.idleLast >= 8;
+    if (surplus && this.phase === 'expand') Object.assign(mix, this.p.warMix, { transport: 0 });
 
     // Coastal cities with troops on their island build the boats.
     const landOn = new Map<number, number>();
@@ -494,7 +506,7 @@ class StrategicTurn {
       if (!want && city.isCoastal && (counts.get('transport') ?? 0) < wantTransports && (counts.get('infantry') ?? 0) >= 2) want = 'transport';
       // Land still to take on this island: infantry gets it fastest.
       if (!want && !alert && this.islandHasWork(city)) want = 'infantry';
-      if (!want && this.phase === 'expand') want = 'infantry';
+      if (!want && this.phase === 'expand' && !surplus) want = 'infantry';
       if (!want) want = this.pickFromMix(city, mix, counts);
       if (!want || !city.canProduce(want).ok) continue;
       add(want);
@@ -924,9 +936,60 @@ class StrategicTurn {
 
   // ─── Aircraft ────────────────────────────────────────────────────────────────
 
+  /**
+   * Recon: fly as far into the fog as the fuel allows, over several turns if needed,
+   * and land at whichever base is nearest when the tank says so. On a big map a drone
+   * that returned home every other turn never saw past its own coast.
+   */
+  private actScout(u: Unit): void {
+    // Several legs per turn: a drone that stops at the fog edge with moves to spare
+    // burns them anyway, and the next turn may be too short to get home.
+    for (let leg = 0; leg < 4 && u.fuel !== null && u.movesLeft > 0; leg++) {
+      const before = u.movesLeft;
+      this.scoutLeg(u);
+      if (!this.alive(u.id) || u.movesLeft >= before) return;
+    }
+  }
+
+  private scoutLeg(u: Unit): void {
+    if (u.fuel === null) return;
+    const bases = this.ownCities().map((c) => c.position);
+    if (bases.length === 0) return;
+    const homeOf = (c: Coord) => this.nearestCoord(c, bases)!;
+    // Airborne units burn every unused move at the end of the turn, so fuel buys
+    // whole turns: the round trip must fit in them (this turn's moves included).
+    const turnsLeft = Math.floor((u.fuel - u.movesLeft) / u.def.moves) + 1;
+    const range = u.movesLeft + (turnsLeft - 1) * u.def.moves - 2;
+    let best: Coord | null = null;
+    let bestScore = -Infinity;
+    for (const c of this.unexplored) {
+      const there = this.dist(u.position, c);
+      if (there === 0) continue;
+      const back = this.dist(c, homeOf(c));
+      if (there + back > range) continue;
+      const key = `air:${Math.floor(c.x / 8)},${Math.floor(c.y / 8)}`;
+      if (this.claimed.get(key) === 1 && there > 3) continue; // another scout is headed there
+      // Far from our bases is new ground; close to the drone is cheap.
+      const score = back - 0.5 * there + this.rng.next() * 2;
+      if (score > bestScore) [best, bestScore] = [c, score];
+    }
+    if (best) {
+      this.claimed.set(`air:${Math.floor(best.x / 8)},${Math.floor(best.y / 8)}`, 1);
+      if (this.moveToward(u, best)) {
+        // Moving lifts the fog: what was the edge is not anymore.
+        this.unexplored = this.unexplored.filter((c) => !this.fog.isExplored(this.world.grid.index(c)));
+        return this.note('air:scout');
+      }
+    }
+    const home = homeOf(u.position);
+    if (this.dist(home, u.position) > 0) this.moveToward(u, home);
+    this.note('air:home');
+  }
+
   private actAircraft(id: UnitId): void {
     const u = this.alive(id);
     if (!u || u.fuel === null) return;
+    if (u.def.attack === 0 && u.carriedBy === null) return this.actScout(u);
     if (u.carriedBy !== null && u.movesLeft <= 0) return;
     const bases = [
       ...this.ownCities().map((c) => c.position),

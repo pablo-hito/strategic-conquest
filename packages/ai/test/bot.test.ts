@@ -16,6 +16,7 @@ function runRounds(match: Match, bots: ReadonlySet<PlayerId>, rounds: number): v
   while (match.status === 'playing' && match.round < stop) {
     const p = match.activePlayer!;
     if (bots.has(p)) playBotTurn(match, p);
+    if (match.status !== 'playing') break; // the bot may win outright on its turn
     const r = match.endTurn(p);
     if (!r.ok) throw new Error(r.error.message);
   }
