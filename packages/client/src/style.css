@@ -521,3 +521,119 @@ select option:disabled { color: var(--fg-faint); }
   background: rgba(255, 82, 82, 0.12);
   font-size: 12px;
 }
+
+/* ── Phone, landscape: square map on the left, console on the right, no page scroll ── */
+.only-touch { display: none !important; }
+.rotate-hint { display: none; }
+@media (pointer: coarse) {
+  .only-touch { display: inline-flex !important; }
+  .btn kbd { display: none; }
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  body { overflow: hidden; }
+  .app {
+    height: 100vh;
+    height: 100dvh;
+    grid-template-columns: min(100vh, 60vw) minmax(0, 1fr);
+    grid-template-columns: min(100dvh, 60vw) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  /* The bar's pieces become cells of the right-hand column. */
+  .bar { display: contents; }
+  .bar .brand, .bar .spacer { display: none; }
+  .stage { grid-column: 1; grid-row: 1 / -1; border-right: 1px solid var(--line); }
+  .readout {
+    grid-column: 2; grid-row: 1;
+    gap: 6px 12px;
+    padding: 6px max(8px, env(safe-area-inset-right, 0px)) 6px 10px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #0f1a28, #0a121c);
+  }
+  .readout .chip { padding: 3px 8px 3px 6px; font-size: var(--step--2); }
+  .stat small { font-size: 0.55rem; margin-bottom: 1px; }
+  .stat b { font-size: var(--step-0); }
+  .stat i { font-size: var(--step--2); }
+  .side {
+    grid-column: 2; grid-row: 2;
+    border-left: 0;
+    overflow: hidden;
+    padding: 6px 8px;
+    gap: 6px;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  /* The rival-turn summary over the map covers what the log would say. */
+  .minimap-card, .log-card { display: none; }
+  .card { padding: 8px 10px; gap: 6px; border-radius: 10px; }
+  .selection { max-height: none; overflow-y: auto; overscroll-behavior: contain; }
+  .unit-head h3 { font-size: var(--step-1); }
+  .unit-badge, .city-mark { transform: scale(0.8); transform-origin: left center; }
+  .stats, .stats.two { grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 3px 8px; }
+  .stats dt { font-size: 0.55rem; }
+  .unit-head { gap: 6px; }
+  .unit-head .muted { font-size: var(--step--2); }
+  .log-card { overflow: hidden; }
+  .log-card .log { min-height: 0; }
+  .log { overflow-y: auto; }
+  .actions {
+    grid-column: 2; grid-row: 3;
+    display: grid;
+    grid-template-columns: repeat(4, auto) 1fr 1.3fr;
+    gap: 6px;
+    padding: 6px max(8px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px)) 8px;
+    border-top: 1px solid var(--line);
+    background: #0a121c;
+  }
+  .actions .btn { justify-content: center; min-height: 44px; padding: 6px 10px; font-size: var(--step--1); }
+  .actions .btn.icon { min-width: 40px; }
+  .actions #btn-new { font-size: var(--step--2); }
+  .zoom { right: 8px; top: 8px; }
+  .zoom button { width: 40px; height: 40px; }
+  .status { left: 8px; bottom: 8px; right: 56px; padding: 5px 8px; font-size: var(--step--2); }
+  .status .hint { display: none; }
+  .report { left: 8px; top: 8px; width: calc(100% - 64px); max-height: 70%; padding: 8px 10px; }
+  .tutorial { left: 8px; right: 8px; bottom: 8px; width: auto; padding: 10px 12px; gap: 6px; font-size: var(--step--1); }
+  .toast { top: 8px; max-width: calc(100% - 64px); }
+  .bot-banner { padding: 10px 14px; font-size: var(--step--1); }
+  .overlay { place-items: start center; padding: 8px; }
+  .sheet { width: min(100%, 640px); padding: 16px; gap: 10px; }
+  .sheet h2 { font-size: var(--step-2); }
+}
+
+/* Phone held upright: ask to turn it (the game is laid out for landscape). */
+@media (orientation: portrait) and (max-width: 600px) {
+  .rotate-hint {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 16px;
+    padding: 24px;
+    text-align: center;
+    background: radial-gradient(circle at 50% 40%, #0d1826, var(--bg) 70%);
+  }
+  .rotate-hint .phone {
+    width: 46px;
+    height: 78px;
+    border: 3px solid var(--accent);
+    border-radius: 10px;
+    animation: turn 2.4s ease-in-out infinite;
+  }
+  .rotate-hint p { margin: 0; max-width: 280px; color: var(--fg-dim); }
+  .rotate-hint strong { font: 600 var(--step-2)/1.2 var(--font-display); letter-spacing: 0.06em; color: var(--fg); }
+}
+@keyframes turn { 0%, 30% { transform: rotate(0); } 55%, 85% { transform: rotate(-90deg); } 100% { transform: rotate(0); } }
+@media (prefers-reduced-motion: reduce) { .rotate-hint .phone { animation: none; transform: rotate(-90deg); } }
+/* Narrow phones in landscape: tools on one row, the two main buttons on another. */
+@media (orientation: landscape) and (max-height: 560px) and (max-width: 720px) {
+  .actions { grid-template-columns: repeat(3, 40px) 1fr; }
+  .actions .btn { min-height: 36px; }
+  .actions #btn-next { grid-column: 1 / 3; min-height: 44px; }
+  .actions #btn-next { grid-column: 1 / 4; }
+  .actions #btn-end { grid-column: 4; min-height: 44px; }
+  .readout { gap: 4px 10px; }
+  .readout .chip { display: none; }
+  .readout { flex-wrap: nowrap; justify-content: space-between; }
+  .stats, .stats.two { grid-template-columns: auto minmax(0, 1fr); }
+}

@@ -113,7 +113,7 @@ class App {
     this.mapPanel.append(el('h2', {}, 'Plano estratégico'), this.minimap);
     this.side.append(this.selPanel, this.mapPanel, this.logPanel);
     this.root.append(this.bar, this.stage, this.side);
-    document.body.append(this.root, this.overlay);
+    document.body.append(this.root, this.overlay, this.rotateHint());
     this.renderer = new MapRenderer(this.canvas, (p) => this.factionOf(p));
     this.tutorial = new Tutorial(this.stage);
     this.bindInput();
@@ -122,6 +122,29 @@ class App {
       this.dirty = true;
     }).observe(this.canvas);
     requestAnimationFrame((t) => this.frame(t));
+  }
+
+  /** Shown only on a phone held upright (CSS): the game is laid out for landscape. */
+  private rotateHint(): HTMLElement {
+    const hint = el('div', { class: 'rotate-hint', role: 'dialog', 'aria-label': 'Girá el teléfono' });
+    hint.innerHTML = `<div class="phone" aria-hidden="true"></div>
+      <strong>Girá el teléfono</strong>
+      <p>Strategic Conquest se juega en horizontal: el mapa a la izquierda y los controles a la derecha.</p>
+      <button class="btn primary" type="button">Pantalla completa en horizontal</button>`;
+    hint.querySelector('button')!.addEventListener('click', () => void this.fullscreen());
+    return hint;
+  }
+
+  /** Full screen (hides the browser bars) and, where allowed, lock to landscape. */
+  private async fullscreen(): Promise<void> {
+    try {
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      else if (!matchMedia('(orientation: portrait)').matches) return void (await document.exitFullscreen());
+      const orientation = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
+      await orientation.lock?.('landscape');
+    } catch {
+      // Not allowed here (iPhone Safari, embedded frames): turning the phone still works.
+    }
   }
 
   // ─── Game lifecycle ────────────────────────────────────────────────────────
@@ -530,7 +553,7 @@ class App {
 
   private updateHoverPath(): void {
     const u = this.selectedUnit();
-    if (!u || !this.hover || sameCoord(u.position, this.hover)) {
+    if (!u || !this.hover || !this.session.world.grid.inBounds(this.hover) || sameCoord(u.position, this.hover)) {
       this.path = null;
       this.pathKey = '';
       return;
@@ -602,11 +625,13 @@ class App {
       <div class="actions">
         <button class="btn icon ${this.sound.muted ? 'muted' : ''}" id="btn-sound" type="button" aria-label="${this.sound.muted ? 'Activar sonido' : 'Silenciar'}" title="${this.sound.muted ? 'Sonido apagado' : 'Sonido encendido'}">♪</button>
         <button class="btn icon" id="btn-help" type="button" aria-label="Ayuda y controles">?</button>
+        <button class="btn icon only-touch" id="btn-full" type="button" aria-label="Pantalla completa" title="Pantalla completa">⛶</button>
         <button class="btn" id="btn-new" type="button">Nueva partida</button>
         <button class="btn" id="btn-next" type="button">Siguiente <kbd>N</kbd></button>
         <button class="btn primary ${idle ? '' : 'ready'}" id="btn-end" type="button">Fin de turno <kbd>Enter</kbd></button>
       </div>`;
     this.bar.querySelector('#btn-help')!.addEventListener('click', () => this.showHelp());
+    this.bar.querySelector('#btn-full')!.addEventListener('click', () => void this.fullscreen());
     this.bar.querySelector('#btn-sound')!.addEventListener('click', () => {
       this.sound.toggle();
       this.sound.play('select');
@@ -1319,8 +1344,10 @@ class App {
           this.dirty = true;
         }
       }
-      const t = this.renderer.screenToTile(p.x, p.y);
-      if (!this.hover || !sameCoord(this.hover, t)) {
+      const tile = this.renderer.screenToTile(p.x, p.y);
+      // Past the map's edge (the canvas can be larger than a small map) there is no tile.
+      const t = this.session?.world.grid.inBounds(tile) ? tile : undefined;
+      if (t ? !this.hover || !sameCoord(this.hover, t) : this.hover) {
         this.hover = t;
         this.updateHoverPath();
         this.dirty = true;
