@@ -391,6 +391,22 @@ export class GameSession {
   }
 
   /** Next unit to handle, after `after` in the same order. */
+  /**
+   * The idle unit closest to `from`, skipping `exclude` (units already passed over in
+   * this round of "next"). Keeps the player working in one area of the map instead of
+   * jumping across it. Ties go to the usual order (transports first).
+   */
+  nearestIdleUnit(from: Coord, exclude: ReadonlySet<UnitId> = new Set()): Unit | undefined {
+    let best: Unit | undefined;
+    let bestD = Infinity;
+    for (const u of this.idleUnits()) {
+      if (exclude.has(u.id)) continue;
+      const d = this.world.grid.distance(from, u.position);
+      if (d < bestD) [best, bestD] = [u, d];
+    }
+    return best;
+  }
+
   nextIdleUnit(after?: UnitId): Unit | undefined {
     const units = this.idleUnits();
     if (units.length === 0) return undefined;

@@ -12,7 +12,7 @@ interface Step {
 }
 
 const STEPS: readonly Step[] = [
-  { action: 'select', title: 'Elegí una unidad', text: 'Hacé clic en tu infantería, o apretá N para ir a la próxima unidad que puede moverse. La activa tiene un halo dorado y una flecha.' },
+  { action: 'select', title: 'Elegí una unidad', text: 'Hacé clic en tu infantería, o apretá N para ir a la próxima unidad que puede moverse. La activa parpadea en magenta, con marco blanco y una flecha.' },
   { action: 'move', title: 'Movela', text: 'Pasá el cursor por el mapa: verás la ruta y en cuántos turnos llega. Hacé clic en el destino. Si está lejos, la unidad sigue sola los turnos siguientes.' },
   { action: 'city', title: 'Elegí qué producir', text: 'Hacé clic en tu ciudad (la del marco de color) y elegí la unidad en "Producción". No hay dinero: cada unidad tarda unos turnos.' },
   { action: 'capture', title: 'Conquistá', text: 'Llevá infantería a una ciudad neutral (gris) y entrá: la capturás. Más ciudades, más producción y un ejército más grande.' },

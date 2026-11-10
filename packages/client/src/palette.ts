@@ -52,6 +52,8 @@ export const TARGET = '#ff5a5a';
 export const PATH = '#5fe3f2';
 export const PATH_LATER = 'rgba(95, 227, 242, 0.5)';
 export const ACTIVE = '#ffd25c';
+/** The unit being commanded: magenta stands out on green land, blue sea and every faction color. */
+export const SELECT = '#ff2bd6';
 export const READY_DOT = '#7dff9a';
 
 /** Faction colors: distinct hues at similar lightness so none dominates. */

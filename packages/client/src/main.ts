@@ -385,20 +385,42 @@ class App {
     return this.session.view().foreignUnits.some((u) => sameCoord(u.position, t));
   }
 
-  /** After acting: stay on the unit if it can still act, else move on to the next one. */
+  /**
+   * After acting the unit stays selected (no jump across the map): N picks the next
+   * one, nearest first. The action ends the current round of "next".
+   */
   private afterAction(id: UnitId, keepToast = false): void {
     this.refresh();
     const u = this.session.ownUnit(id);
     if (this.session.match.status !== 'playing') return;
-    if (u && u.movesLeft > 0 && !this.session.orders.has(id)) return this.select({ kind: 'unit', id });
-    const next = this.session.nextIdleUnit(id);
-    this.select(next ? { kind: 'unit', id: next.id } : null, true);
-    if (!next && !keepToast) this.toast('Todas las unidades movieron. Enter termina el turno.');
+    this.passedOver.clear();
+    if (u) this.lastSpot = u.position;
+    this.select(u ? { kind: 'unit', id } : null);
+    if (!keepToast && !this.session.nearestIdleUnit(this.lastSpot ?? { x: 0, y: 0 })) {
+      this.toast('Todas las unidades movieron. Enter termina el turno.');
+    }
   }
 
+  /** Units skipped with N since the last action, so N never bounces between two. */
+  private readonly passedOver = new Set<UnitId>();
+  /** Where the player was last working: N looks for the nearest unit from here. */
+  private lastSpot: Coord | null = null;
+
   private nextUnit(): void {
-    const cur = this.sel?.kind === 'unit' ? this.sel.id : undefined;
-    const next = this.session.nextIdleUnit(cur);
+    const s = this.session;
+    const cur = this.selectedUnit();
+    if (cur) {
+      this.passedOver.add(cur.id);
+      this.lastSpot = cur.position;
+    }
+    const from = this.lastSpot ?? cur?.position;
+    let next = from ? s.nearestIdleUnit(from, this.passedOver) : s.nextIdleUnit();
+    if (!next && this.passedOver.size > 0) {
+      // Went through every idle unit: start a new round from here.
+      this.passedOver.clear();
+      next = from ? s.nearestIdleUnit(from, cur ? new Set([cur.id]) : new Set()) : undefined;
+      next ??= cur && s.idleUnits().some((u) => u.id === cur.id) ? cur : undefined;
+    }
     if (next) {
       this.sound.play('select');
       this.tutorial.done('select');
@@ -474,6 +496,8 @@ class App {
 
   private startOwnTurn(): void {
     this.focusViewer();
+    this.passedOver.clear();
+    this.lastSpot = null;
     const next = this.session.nextIdleUnit();
     if (next) this.select({ kind: 'unit', id: next.id }, true);
     this.showRivalReport();
@@ -1019,7 +1043,7 @@ class App {
         <dt>Clic</dt><dd>Seleccionar · mover al destino · atacar (objetivo en rojo)</dd>
         <dt>Clic derecho, Esc</dt><dd>Deseleccionar</dd>
         <dt>Arrastrar · rueda</dt><dd>Desplazar el mapa · zoom (también con dos dedos)</dd>
-        <dt>N</dt><dd>Siguiente unidad: primero transportes y barcos, después aviones y tierra</dd>
+        <dt>N</dt><dd>Siguiente unidad: la más cercana a donde estás jugando (al terminar de mover, la unidad queda seleccionada)</dd>
         <dt>Espacio</dt><dd>Dejar la unidad quieta este turno</dd>
         <dt>S</dt><dd>Modo silencioso del submarino</dd>
         <dt>C</dt><dd>Centrar en la selección</dd>

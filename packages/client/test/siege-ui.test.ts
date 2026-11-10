@@ -26,3 +26,17 @@ describe('siege indicator', () => {
     expect(s.besiegedTiles().has(i)).toBe(false);
   });
 });
+
+describe('next unit, nearest first', () => {
+  it('picks the idle unit closest to where the player is working, skipping excluded ones', () => {
+    const s = GameSession.create({ size: 'small', density: 'normal', players: 2, seed: 'near-ui', mode: 'bots', difficulty: 'normal' });
+    const me = s.viewer;
+    const home = s.world.citiesOf(me)[0]!.position;
+    for (const u of s.world.unitsOf(me)) s.world.removeUnit(u.id);
+    const near = s.world.spawnUnit('infantry', me, home);
+    const far = s.world.spawnUnit('recon_drone', me, { x: (home.x + 25) % s.world.grid.width, y: home.y });
+    s.invalidate();
+    expect(s.nearestIdleUnit(home)?.id).toBe(near.id);
+    expect(s.nearestIdleUnit(home, new Set([near.id]))?.id).toBe(far.id);
+  });
+});

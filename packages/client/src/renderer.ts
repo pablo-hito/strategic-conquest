@@ -15,6 +15,7 @@ import {
 import { drawUnitIcon } from './icons.js';
 import {
   ACTIVE,
+  SELECT,
   FOG_RGB,
   INK,
   INK_DARK,
@@ -272,6 +273,32 @@ export class MapRenderer {
       if (cityOwner.has(i)) this.drawCityFrame(sx(x), sy(y), z, cityOwner.get(i)!);
     }
 
+    // Selected unit: a thick blinking magenta frame, a bit larger than the tile and
+    // drawn over counters and city walls so nothing covers it.
+    if (selectedAt && inView(selectedAt.x, selectedAt.y) && !animating.has(overlay.selectedUnit!.id)) {
+      const ctx = this.ctx;
+      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const on = still || time % 800 < 520;
+      const grow = z * 0.14;
+      const px = sx(selectedAt.x) - grow, py = sy(selectedAt.y) - grow, size = z + 2 * grow;
+      ctx.save();
+      ctx.globalAlpha = on ? 1 : 0.35;
+      ctx.shadowColor = SELECT;
+      ctx.shadowBlur = on ? z * 0.5 : 0;
+      ctx.strokeStyle = SELECT;
+      ctx.lineWidth = Math.max(3, z / 7);
+      ctx.beginPath();
+      ctx.roundRect(px, py, size, size, z * 0.18);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(1, z / 20);
+      ctx.beginPath();
+      ctx.roundRect(px + z * 0.09, py + z * 0.09, size - z * 0.18, size - z * 0.18, z * 0.12);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Siege ring: a dashed red ring with spikes around every besieged city.
     if (overlay.besieged?.size) {
       const ctx = this.ctx;
@@ -331,8 +358,8 @@ export class MapRenderer {
     }
     if (overlay.selectedTile) {
       const px = sx(overlay.selectedTile.x), py = sy(overlay.selectedTile.y);
-      ctx.strokeStyle = ACTIVE;
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = SELECT;
+      ctx.lineWidth = Math.max(2, z / 12);
       ctx.strokeRect(px + 1, py + 1, z - 2, z - 2);
     }
   }
@@ -455,27 +482,34 @@ export class MapRenderer {
     ctx.globalAlpha = t.ghost ? 0.45 : 1;
 
     if (selected) {
-      // Glow, rotating dashed ring and a bouncing chevron: impossible to miss.
-      const bob = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : Math.sin(time / 160) * z * 0.06;
+      // The whole tile blinks magenta with a white frame, under the counter: visible
+      // on any terrain and next to any faction color.
+      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const on = still || time % 800 < 520;
+      const px = cx - z / 2, py = cy - z / 2;
+      const lw = Math.max(2, z / 10);
       ctx.save();
-      ctx.shadowColor = ACTIVE;
-      ctx.shadowBlur = z * 0.6;
-      ctx.strokeStyle = ACTIVE;
-      ctx.lineWidth = Math.max(2, z / 12);
-      ctx.setLineDash([z * 0.18, z * 0.12]);
-      ctx.lineDashOffset = -time / 40;
-      ctx.beginPath();
-      ctx.arc(cx, cy, z * 0.62, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.fillStyle = SELECT;
+      ctx.globalAlpha = on ? 0.62 : 0.18;
+      ctx.fillRect(px, py, z, z);
+      ctx.globalAlpha = on ? 1 : 0.45;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = lw;
+      ctx.strokeRect(px + lw / 2, py + lw / 2, z - lw, z - lw);
       ctx.restore();
-      ctx.fillStyle = ACTIVE;
-      const ay = cy - z * 0.78 + bob;
+      // Chevron above, outlined so it reads over the tile above too.
+      const bob = still ? 0 : Math.sin(time / 160) * z * 0.06;
+      const ay = cy - z * 0.8 + bob;
       ctx.beginPath();
-      ctx.moveTo(cx - z * 0.16, ay - z * 0.14);
-      ctx.lineTo(cx + z * 0.16, ay - z * 0.14);
-      ctx.lineTo(cx, ay + z * 0.04);
+      ctx.moveTo(cx - z * 0.18, ay - z * 0.16);
+      ctx.lineTo(cx + z * 0.18, ay - z * 0.16);
+      ctx.lineTo(cx, ay + z * 0.05);
       ctx.closePath();
+      ctx.fillStyle = SELECT;
       ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(1, z / 24);
+      ctx.stroke();
     }
 
     // Counter plate: rounded square (land), hull pill (sea), disc (air).
