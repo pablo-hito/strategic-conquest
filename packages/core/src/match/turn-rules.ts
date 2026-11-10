@@ -5,6 +5,8 @@ import type { CityId, PlayerId, UnitId } from '../shared/ids.js';
 import type { CombatResult } from '../combat/combat-rules.js';
 import type { UnitTypeId } from '../units/unit-types.js';
 import type { WorldState } from '../world/world-state.js';
+import { hasRoomFor, isBesieged, landStackAt, stackLimitAt } from '../cities/siege.js';
+import { UNIT_TYPES } from '../units/unit-types.js';
 
 /**
  * Upkeep: a player can sustain at most ARMY_BASE + ARMY_PER_CITY × cities units.
@@ -17,6 +19,13 @@ export const ARMY_PER_CITY = 5;
 export function armyCap(world: WorldState, player: PlayerId): number {
   return ARMY_BASE + ARMY_PER_CITY * world.citiesOf(player).length;
 }
+
+/**
+ * Over the limit (after losing cities) the army can't be fed: each turn a third of
+ * the excess deserts, cheapest and most battered units first. A side that shrinks
+ * can't keep the army it had when it was big.
+ */
+export const DESERTION_SHARE = 1 / 3;
 
 /** HP restored per turn to units resting in an own city. */
 export const CITY_REPAIR_PER_TURN = 2;
@@ -36,6 +45,10 @@ export type TurnEvent =
   | { type: 'combat'; audience: PlayerId; result: CombatResult }
   /** Production paused this turn because the army is at its upkeep limit. */
   | { type: 'army_at_limit'; audience: PlayerId; units: number; cap: number }
+  /** Units lost to desertion because the army is over its upkeep limit. */
+  | { type: 'units_deserted'; audience: PlayerId; units: UnitId[]; unitTypes: UnitTypeId[]; over: number }
+  /** The city could not produce: besieged, or no room for one more land unit. */
+  | { type: 'production_blocked'; audience: PlayerId; city: CityId; reason: 'besieged' | 'city_full' }
   /** Sent to the captor and to the previous owner (an owner always learns it lost a city). */
   | { type: 'city_captured'; audience: PlayerId; city: CityId; by: PlayerId; from: PlayerId | null }
   | { type: 'player_eliminated'; audience: 'all'; player: PlayerId }
@@ -53,21 +66,41 @@ export function beginPlayerTurn(world: WorldState, player: PlayerId, productionB
   // rounds (deterministic, so replays and saves stay exact).
   const extraTick = productionBonus > 0 && Math.floor(world.turn * productionBonus) > Math.floor((world.turn - 1) * productionBonus);
 
-  const units = world.unitsOf(player).length;
   const cap = armyCap(world, player);
+  desert(world, player, cap, events);
+  let units = world.unitsOf(player).length;
   const atLimit = units >= cap;
   if (atLimit && world.citiesOf(player).length > 0) {
     events.push({ type: 'army_at_limit', audience: player, units, cap });
   }
 
+  const besieged = new Set(world.citiesOf(player).filter((c) => isBesieged(world, c)).map((c) => c.id));
   for (const city of world.citiesOf(player)) {
-    if (atLimit) {
+    if (atLimit || units >= cap) {
       city.tickPortTimer();
       continue;
     }
-    const produced = [city.tickProduction(), extraTick ? city.tickProduction(false) : null];
+    if (besieged.has(city.id)) {
+      city.tickPortTimer();
+      events.push({ type: 'production_blocked', audience: player, city: city.id, reason: 'besieged' });
+      continue;
+    }
+    const order = city.production;
+    const isLand = !!order && UNIT_TYPES[order.unit].domain === 'land';
+    if (isLand && !hasRoomFor(world, player, city.position) && (city.turnsRemaining() ?? 0) <= 1) {
+      // Finished but nowhere to put it: wait (progress kept) until the garrison moves out.
+      city.tickPortTimer();
+      events.push({ type: 'production_blocked', audience: player, city: city.id, reason: 'city_full' });
+      continue;
+    }
+    const produced = [city.tickProduction()];
+    // The difficulty's extra tick only when the result still fits (army and city).
+    if (extraTick && units + 1 < cap && !(isLand && produced[0] && landRoomLeft(world, player, city.position) <= 1)) {
+      produced.push(city.tickProduction(false));
+    }
     for (const type of produced) {
       if (!type) continue;
+      units++;
       const unit = world.spawnUnit(type, player, city.position);
       events.push({
         type: 'unit_produced',
@@ -84,7 +117,7 @@ export function beginPlayerTurn(world: WorldState, player: PlayerId, productionB
     unit.startTurn();
     const city = world.cityAt(unit.position);
     if (city?.owner === player) {
-      unit.repair(CITY_REPAIR_PER_TURN);
+      if (!besieged.has(city.id)) unit.repair(CITY_REPAIR_PER_TURN);
       unit.refuel();
     } else if (unit.carriedBy !== null && unit.def.domain === 'air') {
       unit.repair(CARRIER_REPAIR_PER_TURN);
@@ -93,6 +126,24 @@ export function beginPlayerTurn(world: WorldState, player: PlayerId, productionB
   }
 
   return events;
+}
+
+function landRoomLeft(world: WorldState, player: PlayerId, c: Coord): number {
+  return stackLimitAt(world, c) - landStackAt(world, player, c);
+}
+
+function desert(world: WorldState, player: PlayerId, cap: number, events: TurnEvent[]): void {
+  const all = world.unitsOf(player);
+  const over = all.length - cap;
+  if (over <= 0 || world.citiesOf(player).length === 0) return;
+  // Never a loaded transport or carrier (its cargo would go down with it).
+  const candidates = all
+    .filter((u) => u.cargo.length === 0)
+    .sort((a, b) => a.def.buildTurns - b.def.buildTurns || a.hp / a.def.maxHp - b.hp / b.def.maxHp);
+  const leaving = candidates.slice(0, Math.ceil(over * DESERTION_SHARE));
+  if (leaving.length === 0) return;
+  for (const u of leaving) world.removeUnit(u.id);
+  events.push({ type: 'units_deserted', audience: player, units: leaving.map((u) => u.id), unitTypes: leaving.map((u) => u.type), over });
 }
 
 /**

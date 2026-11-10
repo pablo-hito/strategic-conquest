@@ -29,6 +29,9 @@ export function eventsFor(events: readonly TurnEvent[], player: PlayerId, mask: 
       case 'out_of_supply':
         out.push({ ...e, unit: m(e.unit) });
         break;
+      case 'units_deserted':
+        out.push({ ...e, units: e.units.map(m) });
+        break;
       case 'aircraft_landed':
         out.push({ ...e, unit: m(e.unit), carrier: m(e.carrier) });
         break;

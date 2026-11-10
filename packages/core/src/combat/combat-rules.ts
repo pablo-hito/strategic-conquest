@@ -1,3 +1,5 @@
+import { isBesieged } from '../cities/siege.js';
+import { ENTRENCH_STEP } from '../units/unit.js';
 import type { Coord } from '../grid/coords.js';
 import type { CityId, PlayerId, UnitId } from '../shared/ids.js';
 import { err, ok, type Result } from '../shared/result.js';
@@ -99,8 +101,11 @@ function defenseStrength(world: WorldState, u: Unit): number {
   let m = u.defenseModifier;
   if (def.domain === 'land' && u.carriedBy === null) {
     m += world.grid.defAt(u.position).defenseBonus[def.movementClass] ?? 0;
-    if (world.cityAt(u.position)?.owner === u.owner) {
+    const city = world.cityAt(u.position);
+    if (city?.owner === u.owner) {
       m += def.movementClass === 'foot' ? CITY_DEFENSE_BONUS_FOOT : CITY_DEFENSE_BONUS;
+      // Besieged defenders cannot dig in: the trenches are under fire from every side.
+      if (isBesieged(world, city)) m -= u.entrenchment * ENTRENCH_STEP;
     }
   }
   return Math.max(0.5, def.defense) * m * healthFactor(u);

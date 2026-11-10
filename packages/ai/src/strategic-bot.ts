@@ -5,6 +5,7 @@ import {
   UNIT_TYPES,
   findPath,
   fogKnowledge,
+  hasRoomFor,
   forecastAttack,
   planAttack,
   type City,
@@ -1107,7 +1108,20 @@ class StrategicTurn {
 
   private moveToward(u: Unit, goal: Coord): boolean {
     const path = findPath(this.known, u, goal, { maxTurns: this.searchTurns(u, goal) });
-    return path ? this.follow(u, path) : false;
+    if (path) return this.follow(u, path);
+    // A full tile (stacking limit) can't be entered: get as close as the crowd allows.
+    if (u.def.domain !== 'land' || hasRoomFor(this.world, this.me, goal)) return false;
+    const around = this.world.grid
+      .neighbors(goal)
+      .filter((c) => this.world.grid.isLand(c) && hasRoomFor(this.world, this.me, c))
+      .sort((a, b) => this.dist(u.position, a) - this.dist(u.position, b))
+      .slice(0, 2);
+    for (const c of around) {
+      if (this.dist(c, u.position) === 0) return true;
+      const p2 = findPath(this.known, u, c, { maxTurns: this.searchTurns(u, c) });
+      if (p2) return this.follow(u, p2);
+    }
+    return false;
   }
 
   /** Long searches only where a route is known to exist (same landmass) or at sea. */
@@ -1122,10 +1136,13 @@ class StrategicTurn {
     const range = u.def.attackRange?.max ?? 1;
     if (this.dist(u.position, target) <= range && this.dist(u.position, target) >= (u.def.attackRange?.min ?? 1)) return true;
     const naval = u.def.domain === 'sea';
+    // Spread around the target (free tiles first): units on every side cut it off,
+    // and a city ringed on half its sides is besieged.
+    const crowd = (c: Coord) => this.world.unitsAt(c).filter((x) => x.owner === this.me && x.carriedBy === null).length;
     const spots = this.world.grid
       .neighbors(target)
       .filter((c) => (naval ? this.isKnownWaterOrPort(c) : u.def.domain === 'air' || this.fog.isExplored(this.world.grid.index(c))))
-      .sort((a, b) => this.dist(u.position, a) - this.dist(u.position, b))
+      .sort((a, b) => Math.min(crowd(a), 1) - Math.min(crowd(b), 1) || this.dist(u.position, a) - this.dist(u.position, b))
       .slice(0, 3);
     for (const s of spots) {
       if (s.x === u.position.x && s.y === u.position.y) return true;

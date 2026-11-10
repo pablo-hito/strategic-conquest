@@ -40,6 +40,8 @@ export interface Overlay {
   readonly assaults?: ReadonlySet<TileIndex> | undefined;
   readonly path?: readonly PathStep[] | undefined;
   readonly hover?: Coord | undefined;
+  /** Besieged cities (tile indices): red siege ring. */
+  readonly besieged?: ReadonlySet<TileIndex> | undefined;
 }
 
 export interface Camera {
@@ -268,6 +270,25 @@ export class MapRenderer {
       this.drawToken(sx(x) + z / 2, sy(y) + z / 2, z, tokens[0]!, tokens.length, isSelected, time);
       // A garrisoned city stays readable: its banner and walls frame the counter.
       if (cityOwner.has(i)) this.drawCityFrame(sx(x), sy(y), z, cityOwner.get(i)!);
+    }
+
+    // Siege ring: a dashed red ring with spikes around every besieged city.
+    if (overlay.besieged?.size) {
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 82, 82, 0.9)';
+      ctx.lineWidth = Math.max(1.5, z / 14);
+      ctx.setLineDash([z * 0.12, z * 0.08]);
+      ctx.lineDashOffset = -time / 120;
+      for (const i of overlay.besieged) {
+        const x = i % view.width, y = Math.floor(i / view.width);
+        if (!inView(x, y)) continue;
+        const cx = sx(x) + z / 2, cy = sy(y) + z / 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, z * 0.62, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
 
     // 6. Attack targets: pulsing red reticles (solid: in range now; dashed: move first).

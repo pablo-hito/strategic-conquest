@@ -120,6 +120,8 @@ export class OnlineSession extends GameSession {
   override moveTo(id: UnitId, goal: Coord): string | null {
     const unit = this.ownUnit(id);
     if (!unit) return null;
+    const full = this.fullTileMessage(unit, goal);
+    if (full) return full;
     const plan = this.plan(id, goal);
     if (!plan || plan.steps.length === 0) return 'No hay camino conocido hasta ahí.';
     this.orders.delete(id);

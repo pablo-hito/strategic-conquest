@@ -1,5 +1,9 @@
 import {
   Match,
+  STACK_LIMIT_CITY,
+  STACK_LIMIT_FIELD,
+  UNIT_TYPES,
+  hasRoomFor,
   PlayerId,
   WorldState,
   buildPlayerView,
@@ -185,6 +189,43 @@ export class GameSession {
     return u && u.owner === this.viewer ? u : undefined;
   }
 
+  /**
+   * Cities the viewer can see are besieged (enemy units on half the tiles around and
+   * none of the owner's outside), judged only from what the viewer sees.
+   */
+  besiegedTiles(): Set<TileIndex> {
+    const v = this.view();
+    const { grid } = this.world;
+    const owners = new Map<TileIndex, Set<PlayerId>>();
+    const put = (c: Coord, owner: PlayerId) => {
+      const i = grid.index(c);
+      (owners.get(i) ?? owners.set(i, new Set()).get(i)!).add(owner);
+    };
+    for (const u of v.ownUnits) if (u.carriedBy === null && UNIT_TYPES[u.type].domain !== 'air') put(u.position, u.owner);
+    for (const u of v.foreignUnits) if (UNIT_TYPES[u.type].domain !== 'air') put(u.position, u.owner);
+    const out = new Set<TileIndex>();
+    for (const c of [...v.ownCities, ...v.knownCities]) {
+      if (!c.owner) continue;
+      const around = grid.neighbors(c.position);
+      let enemy = 0;
+      let relieved = false;
+      for (const n of around) {
+        const here = owners.get(grid.index(n));
+        if (!here) continue;
+        if (here.has(c.owner)) relieved = true;
+        else enemy++;
+      }
+      if (!relieved && enemy * 2 >= around.length) out.add(grid.index(c.position));
+    }
+    return out;
+  }
+
+  /** Why a land unit can't end on `goal`, if the tile is full (stacking limit). */
+  protected fullTileMessage(unit: Unit, goal: Coord): string | null {
+    if (unit.def.domain !== 'land' || !this.world.grid.isLand(goal) || hasRoomFor(this.world, this.viewer, goal)) return null;
+    return `Casilla llena: entran ${STACK_LIMIT_CITY} unidades de tierra en una ciudad y ${STACK_LIMIT_FIELD} en el campo.`;
+  }
+
   /** Own units on a tile: top-level first, then cargo. */
   ownUnitsAt(c: Coord): Unit[] {
     return this.world
@@ -366,6 +407,8 @@ export class GameSession {
   moveTo(id: UnitId, goal: Coord): string | null {
     const unit = this.ownUnit(id);
     if (!unit) return null;
+    const full = this.fullTileMessage(unit, goal);
+    if (full) return full;
     const plan = this.plan(id, goal);
     if (!plan || plan.steps.length === 0) return 'No hay camino conocido hasta ahí.';
     this.orders.delete(id);
@@ -563,11 +606,14 @@ export class GameSession {
         out.blockedBy === 'ENEMY_PRESENT' ? 'Un enemigo oculto en la niebla cortó el camino.'
           : out.blockedBy === 'IMPASSABLE' ? 'El terreno recién descubierto no se puede cruzar: la ruta se cortó.'
           : out.blockedBy === 'CITY_NOT_OWNED' ? 'Una ciudad ajena cortó el camino.'
+          : out.blockedBy === 'STACK_FULL' ? 'El camino pasa por una casilla llena de tropas propias.'
           : 'El camino quedó bloqueado.';
       this.push(me, `${UNIT_NAME[unit.type]}: ${why}`, 'warn');
     }
     this.pushEvents(out.events);
   }
+
+  private readonly blockedSeen = new Map<string, number>();
 
   protected pushEvents(events: readonly TurnEvent[]): void {
     for (const e of events) {
@@ -589,6 +635,23 @@ export class GameSession {
         case 'army_at_limit':
           this.push(e.audience, `Ejército al límite (${e.units}/${e.cap}): las ciudades no producen hasta que haya lugar. Más ciudades sostienen más unidades.`, 'warn');
           break;
+        case 'units_deserted': {
+          const n = e.units.length;
+          this.push(e.audience, `Desertaron ${n} unidad${n === 1 ? '' : 'es'} (${e.unitTypes.map((t) => UNIT_NAME[t]).join(', ')}): el ejército supera en ${e.over} lo que sus ciudades pueden sostener.`, 'bad');
+          break;
+        }
+        case 'production_blocked': {
+          // Once per blockage, not every turn it lasts.
+          const key = `${e.city}:${e.reason}`;
+          const last = this.blockedSeen.get(key);
+          this.blockedSeen.set(key, this.match.round);
+          if (last !== undefined && last >= this.match.round - 1) break;
+          const city = this.world.city(e.city);
+          const name = city?.name ?? 'Una ciudad';
+          if (e.reason === 'besieged') this.push(e.audience, `${name} está sitiada: no produce ni repara hasta romper el cerco.`, 'bad', city?.position);
+          else this.push(e.audience, `${name} terminó una unidad pero está llena (${STACK_LIMIT_CITY} de tierra): sacá tropas para que salga.`, 'warn', city?.position);
+          break;
+        }
         case 'city_captured': {
           const city = this.world.city(e.city);
           const name = city?.name ?? 'una ciudad';

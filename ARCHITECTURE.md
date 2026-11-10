@@ -105,6 +105,12 @@ Sólo el primer paso puede rechazar el comando entero; a partir de ahí la unida
 
 **Mantenimiento (límite de ejército).** Cada jugador sostiene a lo sumo `6 + 5 × ciudades` unidades (`armyCap`). En ese límite, al inicio de su turno sus ciudades no producen (el progreso se conserva) y recibe el evento `army_at_limit`. Más ciudades sostienen más unidades; perder unidades o **disolverlas** (`Match.disband`, que no permite disolver un transporte cargado) libera lugar. Así los ejércitos no crecen sin fin a mitad de partida.
 
+**Reglas de asedio** (para que los finales no se eternicen; `cities/siege.ts`):
+- *Apilamiento*: hasta 4 unidades de tierra (sin contar la carga de los transportes) en una ciudad y 2 en una casilla abierta; barcos y aviones no tienen límite. Se valida en cada paso (`STACK_FULL`), así una unidad nunca queda en una casilla llena por quedarse sin movimientos a mitad de camino, y el buscador de rutas las esquiva. Una ciudad llena retiene la unidad terminada (evento `production_blocked`, motivo `city_full`) sin perder el progreso.
+- *Deserción*: si el ejército supera el límite (sólo pasa al perder ciudades), al inicio del turno deserta un tercio del excedente, redondeado hacia arriba: primero las unidades más baratas y más dañadas, nunca un transporte o portaaviones cargado (evento `units_deserted`). La producción, además, ya no pasa del límite ni con el turno extra de la dificultad.
+- *Cerco*: una ciudad está sitiada si hay unidades enemigas (de tierra o barcos) en al menos la mitad de las casillas vecinas y ninguna unidad del dueño en ninguna de ellas. Sitiada no produce (`production_blocked`, motivo `besieged`), no repara y sus defensores pierden el atrincheramiento en combate. Se rompe sacando una unidad a una casilla vecina o liberándola desde afuera. El visor la marca con un anillo rojo, calculado sólo con lo que ve el jugador.
+- *Bot*: si su destino está lleno se acerca a una casilla vecina, y al atacar una ciudad reparte las unidades alrededor (primero las casillas libres), lo que la cerca. Entre bots, en mapa chico, 3 de 8 partidas terminaron con ganador (antes 0 de 8), una en la ronda 97.
+
 **Fin del turno (`endPlayerTurn`):**
 1. Los aviones sobre un portaaviones propio con lugar aterrizan en él (pasan a ser carga) y repostan.
 2. Los aviones que quedan en el aire gastan los MP que no usaron ("loiter"): así un caza con 20 de combustible y 10 MP aguanta dos turnos fuera de base. Con 0 combustible y lejos de una base, se estrellan.

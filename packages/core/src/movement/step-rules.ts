@@ -4,6 +4,7 @@ import type { UnitId } from '../shared/ids.js';
 import { err, ok, type Result } from '../shared/result.js';
 import type { Unit } from '../units/unit.js';
 import type { MapKnowledge } from './map-knowledge.js';
+import { STACK_LIMIT_CITY, STACK_LIMIT_FIELD } from '../cities/siege.js';
 
 export type StepKind =
   | 'move'
@@ -28,7 +29,9 @@ export type StepError =
   | 'ENEMY_PRESENT'
   | 'CITY_NOT_OWNED'
   | 'IMPASSABLE'
-  | 'NO_TRANSPORT_SPACE';
+  | 'NO_TRANSPORT_SPACE'
+  /** Land units: the tile already holds as many as fit (4 in a city, 2 in the open). */
+  | 'STACK_FULL';
 
 /**
  * Can `unit` take one step from `from` to `to` given what `k` knows? Does not look at
@@ -89,6 +92,11 @@ export function checkStep(k: MapKnowledge, unit: Unit, from: Coord, to: Coord): 
       // Cities have roads.
       const cost = ownCity ? 1 : tdef.moveCost[def.movementClass];
       if (cost === IMPASSABLE) return err('IMPASSABLE', `${def.name} cannot enter ${terrain}`);
+      // Stacking: not even passing through a full tile (a unit could run out of moves on it).
+      const stacked = here.filter((u) => u.owner === unit.owner && u.def.domain === 'land' && u.carriedBy === null).length;
+      if (stacked >= (ownCity ? STACK_LIMIT_CITY : STACK_LIMIT_FIELD)) {
+        return err('STACK_FULL', `tile is full (${stacked} units)`);
+      }
       return ok({ cost, kind: unit.carriedBy !== null ? 'disembark' : 'move' });
     }
   }

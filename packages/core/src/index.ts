@@ -8,6 +8,7 @@ export * from './units/unit-types.js';
 export * from './units/unit.js';
 export * from './cities/specialization.js';
 export * from './cities/city.js';
+export * from './cities/siege.js';
 export * from './world/world-state.js';
 export * from './visibility/line-of-sight.js';
 export * from './visibility/vision.js';

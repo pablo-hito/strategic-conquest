@@ -1,5 +1,6 @@
 import {
   CITY_SPECIALIZATIONS,
+  STACK_LIMIT_CITY,
   armyCap,
   TERRAINS,
   UNIT_TYPES,
@@ -67,6 +68,7 @@ class App {
   private hover: Coord | undefined;
   private reach: Map<TileIndex, ReachableTile> | undefined;
   private targets: Set<TileIndex> | undefined;
+  private besieged: Set<TileIndex> | undefined;
   private assaults: Set<TileIndex> | undefined;
   private path: PlannedPath | null = null;
   private pathKey = '';
@@ -539,10 +541,12 @@ class App {
           assaults: this.assaults,
           path: this.path?.steps,
           hover: this.hover,
+          besieged: this.besieged,
         },
         time,
       );
       if (this.dirty) {
+        this.besieged = this.session!.besiegedTiles();
         drawMinimap(this.minimap, view, r.camera, r.viewportTiles, (p) => this.factionOf(p));
         this.renderStatus();
       }
@@ -566,7 +570,7 @@ class App {
         <span class="stat"><small>Ronda</small><b>${s.match.round}</b></span>
         <span class="stat"><small>Ciudades</small><b>${mine}</b><i>/${total}</i>
           <span class="share" style="--v:${Math.round((mine / Math.max(1, total)) * 100)}%"></span></span>
-        <span class="stat ${army >= cap ? 'over' : ''}" title="Cada ciudad sostiene 5 unidades más (base 6). Al límite, las ciudades no producen."><small>Ejército</small><b>${army}</b><i>/${cap}</i></span>
+        <span class="stat ${army >= cap ? 'over' : ''}" title="Cada ciudad sostiene 5 unidades más (base 6). Al límite, las ciudades no producen; por encima (al perder ciudades), un tercio del excedente deserta cada turno."><small>Ejército</small><b>${army}</b><i>/${cap}</i></span>
         <span class="stat ${idle ? 'pending' : 'done'}"><small>Por mover</small><b>${idle}</b></span>
         ${this.onlineReadout()}
       </div>
@@ -911,10 +915,14 @@ class App {
     }).join('');
     const here = s.ownUnitsAt(c.position).filter((u) => u.carriedBy === null);
     const color = this.factionOf(c.owner);
+    const landHere = here.filter((u) => u.def.domain === 'land').length;
+    const sieged = s.besiegedTiles().has(s.world.grid.index(c.position));
 
     this.selPanel.innerHTML = `
       <div class="unit-head"><div class="city-mark" style="--faction:${color}" aria-hidden="true"></div>
         <div><h3>${esc(c.name)}</h3><p class="muted">${c.isCoastal ? 'Puerto' : 'Interior'} · X${c.position.x} Y${c.position.y}${c.portDisabledTurns ? ` · puerto inutilizado ${c.portDisabledTurns} t` : ''}</p></div></div>
+      ${sieged ? '<p class="siege-note">Sitiada: no produce, no repara y sus defensores no se atrincheran. Poné una unidad propia en una casilla vecina para romper el cerco.</p>' : ''}
+      <p class="muted small">Tropas de tierra: ${landHere}/${STACK_LIMIT_CITY}</p>
       <label class="field" for="prod">Producción
         <select id="prod">${prod ? '' : '<option value="" selected disabled>Elegí una unidad</option>'}${options}</select></label>
       ${prod ? `<dl class="stats two"><dt>Progreso</dt><dd class="meter"><i style="--v:${(prod.progress / total) * 100}%;--meter:var(--accent)"></i>${prod.progress}/${total}</dd><dt>Lista en</dt><dd>${plural(total - prod.progress, 'turno', 'turnos')}</dd></dl>` : ''}
@@ -1018,6 +1026,12 @@ class App {
         <dt>Enter</dt><dd>Fin de turno</dd>
       </dl>
       <p class="muted small">La tropa que viaja en un transporte en altamar no aparece en "Siguiente": se mueve con el barco. Vuelve a aparecer cuando el transporte está junto a tierra y puede desembarcar.</p>
+      <h2>Reglas de asedio</h2>
+      <dl class="keys">
+        <dt>Apilamiento</dt><dd>Hasta 4 unidades de tierra por ciudad y 2 por casilla abierta (barcos y aviones sin límite). Una ciudad llena retiene la unidad terminada hasta que salga alguien.</dd>
+        <dt>Cerco</dt><dd>Con enemigos en la mitad de las casillas vecinas y ninguna tropa propia afuera, la ciudad queda sitiada (anillo rojo): no produce, no repara y sus defensores no se atrincheran.</dd>
+        <dt>Deserción</dt><dd>Si al perder ciudades el ejército supera su límite, cada turno deserta un tercio del excedente (las unidades más baratas y dañadas primero).</dd>
+      </dl>
       <div class="row"><button class="btn primary" type="button" data-act="close">Entendido</button><button class="btn" type="button" data-act="tutorial">Ver el tutorial</button></div></div>`;
     o.querySelector('[data-act=close]')!.addEventListener('click', () => {
       delete o.dataset.help;

@@ -513,3 +513,11 @@ select option:disabled { color: var(--fg-faint); }
   .presets { grid-template-columns: 1fr; }
   .tutorial { left: 14px; right: 14px; width: auto; }
 }
+
+.siege-note {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border-left: 3px solid #ff5252;
+  background: rgba(255, 82, 82, 0.12);
+  font-size: 12px;
+}
