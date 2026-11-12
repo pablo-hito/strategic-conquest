@@ -67,8 +67,8 @@ describe('City', () => {
   it('starts producing infantry when captured and completes on schedule', () => {
     const c = coastal();
     expect(c.production).toEqual({ unit: 'infantry', progress: 0 });
-    const done = [1, 2, 3, 4].map(() => c.tickProduction());
-    expect(done).toEqual([null, null, null, 'infantry']);
+    const done = [1, 2].map(() => c.tickProduction());
+    expect(done).toEqual([null, 'infantry']);
     expect(c.production?.progress).toBe(0); // repeats
   });
 
@@ -93,26 +93,25 @@ describe('City', () => {
 
   it('builds armor faster in an industrial hub', () => {
     const c = coastal();
-    expect(c.buildTurnsFor('heavy_tank')).toBe(8);
+    expect(c.buildTurnsFor('heavy_tank')).toBe(5);
     c.setSpecialization('industrial_hub');
-    expect(c.buildTurnsFor('heavy_tank')).toBe(6);
-    expect(c.buildTurnsFor('infantry')).toBe(4);
+    expect(c.buildTurnsFor('heavy_tank')).toBe(4);
+    expect(c.buildTurnsFor('infantry')).toBe(2);
   });
 
   it('keeps progress when re-selecting the same unit, loses it when switching', () => {
     const c = coastal();
     c.tickProduction();
-    c.tickProduction();
     c.setProduction('infantry');
-    expect(c.production?.progress).toBe(2);
+    expect(c.production?.progress).toBe(1);
     c.setProduction('recon');
     expect(c.production?.progress).toBe(0);
   });
 
   it('strategic bombing halves progress and closes the port for two turns', () => {
     const c = coastal();
-    c.setProduction('destroyer');
-    for (let i = 0; i < 7; i++) c.tickProduction();
+    c.setProduction('submarine'); // 7 turns
+    for (let i = 0; i < 6; i++) c.tickProduction();
     c.applyStrategicBombing();
     expect(c.production?.progress).toBe(3);
     expect(c.isPortOperational).toBe(false);

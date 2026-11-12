@@ -108,7 +108,8 @@ export class Match {
     if (r.value.captured) {
       const from = r.value.capturedFrom ?? null;
       events.push({ type: 'city_captured', audience: player, city: r.value.captured, by: player, from });
-      if (from) events.push({ type: 'city_captured', audience: from, city: r.value.captured, by: player, from });
+      const lost = r.value.aircraftLost?.length ?? 0;
+      if (from) events.push({ type: 'city_captured', audience: from, city: r.value.captured, by: player, from, ...(lost ? { aircraftLost: lost } : {}) });
     }
     // Captures and crashes can end the game (or knock the mover out) mid-turn.
     if (r.value.captured || r.value.stoppedBy === 'CRASHED') events.push(...this.checkVictory());

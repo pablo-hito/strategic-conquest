@@ -427,7 +427,7 @@ class StrategicTurn {
     const fromHome = (c: Coord) => Math.min(...home.map((h) => this.dist(h.position, c)));
     const pool = this.phase === 'war' && this.knownEnemyCities().length > 0 ? this.knownEnemyCities() : this.knownNeutral();
     if (pool.length === 0) return null;
-    const defenders = (c: Coord) => this.enemies.filter((e) => this.dist(e.position, c) <= 2).length;
+    const defenders = (c: Coord) => this.enemies.filter((e) => e.def.domain !== 'air' && this.dist(e.position, c) <= 2).length;
     const jitter = new Rng(`target:${this.me}:${Math.floor(this.match.round / 10)}`);
     const noise = new Map(pool.map((c) => [`${c.x},${c.y}`, jitter.next() * 8]));
     const score = (c: Coord) => fromHome(c) + defenders(c) * 6 + noise.get(`${c.x},${c.y}`)!;
@@ -475,17 +475,22 @@ class StrategicTurn {
     // Boats on demand: one per couple of neutral cities overseas, and enough for the
     // troops that had nothing to do last turn. The war adds the strike force's lift.
     const overseas = this.overseasNeutral().length;
-    let wantTransports = Math.max(overseas > 0 ? Math.ceil(overseas / 2) : 0, Math.ceil(this.mem.idleLast / 4));
+    let wantTransports = Math.max(overseas > 0 ? Math.ceil(overseas / 2) : 0, Math.ceil(this.mem.idleLast / 3));
     if (this.phase === 'war' && this.knownEnemyCities().length > 0) wantTransports = Math.max(wantTransports, this.offensive ? 2 : 1);
     wantTransports = Math.min(wantTransports, 2 + Math.floor(cities.length / 2));
 
     // Eyes first: recon drones find islands and the enemy far faster than infantry,
     // and a big map needs more of them.
     const scouts = Math.max(2, this.p.drones, Math.round(2 * this.scale ** 0.7));
-    const wantDrones = this.unexplored.length === 0 ? 0 : this.exploredShare < 0.8 ? scouts : this.p.drones;
+    // Scouts grow with the empire: on a small home island the first cities must build
+    // boats, not a squadron of drones.
+    const wantDrones = this.unexplored.length === 0 ? 0 : this.exploredShare < 0.8 ? Math.min(scouts, 1 + Math.floor(cities.length / 3)) : this.p.drones;
     // Troops already waiting for a boat: more infantry would only pile up on the docks.
     const surplus = this.mem.idleLast >= 8;
-    if (surplus && this.phase === 'expand') Object.assign(mix, this.p.warMix, { transport: 0 });
+    // In the opening a surplus never turns into armor (tanks can't take cities and
+    // ended up parked in the rear): extra boats, and mechanized infantry inland.
+    const openingSurplus = surplus && this.phase === 'expand';
+    if (openingSurplus) wantTransports = Math.max(wantTransports, Math.min(2 + Math.floor(cities.length / 2), Math.ceil(this.mem.idleLast / 3) + 1));
 
     // Coastal cities with troops on their island build the boats.
     const landOn = new Map<number, number>();
@@ -506,10 +511,11 @@ class StrategicTurn {
       if (!want && (counts.get('recon_drone') ?? 0) < wantDrones && (counts.get('infantry') ?? 0) >= 2) want = 'recon_drone';
       if (!want && city.isCoastal && (counts.get('transport') ?? 0) < wantTransports && (counts.get('infantry') ?? 0) >= 2) want = 'transport';
       // Land still to take on this island: infantry gets it fastest.
-      if (!want && !alert && this.islandHasWork(city)) want = 'infantry';
-      if (!want && this.phase === 'expand' && !surplus) want = 'infantry';
+      if (!want && !alert && this.islandHasWork(city) && !(openingSurplus && (this.neutralOf.get(this.massOf(city.position))?.length ?? 0) === 0)) want = 'infantry';
+      if (!want && this.phase === 'expand') want = surplus ? 'mech_infantry' : 'infantry';
       if (!want) want = this.pickFromMix(city, mix, counts);
       if (!want || !city.canProduce(want).ok) continue;
+      if (city.production?.unit !== want || city.production.progress === 0) this.note(`prod:${want}`);
       add(want);
       if (city.production?.unit !== want) this.match.setProduction(this.me, city.id, want);
     }
@@ -532,9 +538,12 @@ class StrategicTurn {
   /** Neutral cities left on this island, or fog to clear and too few troops to clear it. */
   private islandHasWork(city: City): boolean {
     const m = this.massOf(city.position);
-    if ((this.neutralOf.get(m)?.length ?? 0) > 0) return true;
+    const troops = this.world.unitsOf(this.me).filter((u) => u.def.domain === 'land' && u.carriedBy === null && this.massOf(u.position) === m).length;
+    // Enough soldiers already here for what is left to take (plus a few to explore):
+    // more would only pile up on the docks.
+    const neutral = this.neutralOf.get(m)?.length ?? 0;
+    if (neutral > 0) return troops < neutral + 3;
     if ((this.frontierOf.get(m)?.length ?? 0) === 0) return false;
-    const troops = this.world.unitsOf(this.me).filter((u) => u.def.domain === 'land' && this.massOf(u.position) === m).length;
     return troops < 3;
   }
 
@@ -687,7 +696,8 @@ class StrategicTurn {
       ...(which === 'any' ? (this.enemyCitiesOf.get(m) ?? []) : []),
     ]);
     // Undefended cities first, then nearest.
-    const defended = (c: Coord) => this.enemies.some((e) => this.dist(e.position, c) === 0);
+    // Aircraft parked in a city don't defend it: walking in takes it (and them).
+    const defended = (c: Coord) => this.enemies.some((e) => e.def.domain !== 'air' && this.dist(e.position, c) === 0);
     const candidates = pool
       .sort((a, b) => Number(defended(a)) - Number(defended(b)) || this.dist(u.position, a) - this.dist(u.position, b))
       .slice(0, MAX_PATH_TRIES);

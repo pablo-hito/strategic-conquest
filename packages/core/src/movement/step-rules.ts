@@ -51,13 +51,19 @@ export function checkStep(k: MapKnowledge, unit: Unit, from: Coord, to: Coord): 
   const tdef = TERRAIN_DEFS[terrain];
 
   const here = k.units(to);
-  if (here.some((u) => u.owner !== unit.owner)) {
+  // Two layers: aircraft only block aircraft, and ground and sea units only block
+  // each other. A plane overhead never closes a road, and an enemy plane parked in a
+  // city doesn't stop it from being taken.
+  const def = unit.def;
+  const flying = def.domain === 'air';
+  if (here.some((u) => u.owner !== unit.owner && u.carriedBy === null && (u.def.domain === 'air') === flying)) {
     return err('ENEMY_PRESENT', 'tile is occupied by an enemy (attack instead)');
   }
 
-  const def = unit.def;
   const city = k.city(to);
   const ownCity = city !== null && city.owner === unit.owner;
+  // Aircraft may fly over a foreign city (they can't land or refuel there).
+  if (city && !ownCity && flying) return ok({ cost: tdef.moveCost.air, kind: 'move' });
   if (city && !ownCity) {
     // Defenders were ruled out above, so an infantry-type unit just walks in.
     // Amphibious assaults (straight off a transport) are allowed.

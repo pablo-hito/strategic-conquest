@@ -50,7 +50,7 @@ export type TurnEvent =
   /** The city could not produce: besieged, or no room for one more land unit. */
   | { type: 'production_blocked'; audience: PlayerId; city: CityId; reason: 'besieged' | 'city_full' }
   /** Sent to the captor and to the previous owner (an owner always learns it lost a city). */
-  | { type: 'city_captured'; audience: PlayerId; city: CityId; by: PlayerId; from: PlayerId | null }
+  | { type: 'city_captured'; audience: PlayerId; city: CityId; by: PlayerId; from: PlayerId | null; aircraftLost?: number }
   | { type: 'player_eliminated'; audience: 'all'; player: PlayerId }
   | { type: 'match_won'; audience: 'all'; player: PlayerId; reason: 'city_share' | 'last_standing' };
 
@@ -214,7 +214,7 @@ export function suppliedLand(world: WorldState, player: PlayerId): Set<TileIndex
   const blocked = (c: Coord) => {
     const city = world.cityAt(c);
     if (city && city.owner !== player) return true;
-    return world.unitsAt(c).some((u) => u.owner !== player && u.carriedBy === null);
+    return world.unitsAt(c).some((u) => u.owner !== player && u.carriedBy === null && u.def.domain !== 'air');
   };
   for (let head = 0; head < queue.length; head++) {
     for (const n of grid.neighbors(queue[head]!)) {

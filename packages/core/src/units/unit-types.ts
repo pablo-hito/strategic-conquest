@@ -96,99 +96,99 @@ export const UNIT_TYPES: Readonly<Record<UnitTypeId, UnitTypeDef>> = {
   recon: {
     id: 'recon', name: 'Light Recon', domain: 'land', movementClass: 'wheeled',
     moves: 5, vision: 3, eyeHeight: LAND_EYE, maxHp: 6, size: 2, attack: 1, defense: 1,
-    targetClass: 'soft', buildTurns: 3,
+    targetClass: 'soft', buildTurns: 2,
   },
   infantry: {
     id: 'infantry', name: 'Infantry', domain: 'land', movementClass: 'foot',
     moves: 2, vision: 2, eyeHeight: LAND_EYE, maxHp: 10, size: 1, attack: 2, defense: 3,
-    targetClass: 'soft', buildTurns: 4, canCaptureCities: true, canEntrench: true,
+    targetClass: 'soft', buildTurns: 2, canCaptureCities: true, canEntrench: true,
   },
   mech_infantry: {
     id: 'mech_infantry', name: 'Mechanized Infantry', domain: 'land', movementClass: 'tracked',
     moves: 3, vision: 2, eyeHeight: LAND_EYE, maxHp: 10, size: 2, attack: 3, defense: 3,
-    targetClass: 'armored', buildTurns: 6, canCaptureCities: true, canEntrench: true,
+    targetClass: 'armored', buildTurns: 4, canCaptureCities: true, canEntrench: true,
   },
   heavy_tank: {
     id: 'heavy_tank', name: 'Heavy Tank', domain: 'land', movementClass: 'tracked',
     moves: 3, vision: 2, eyeHeight: LAND_EYE, maxHp: 12, size: 3, attack: 6, defense: 4,
-    targetClass: 'armored', buildTurns: 8,
+    targetClass: 'armored', buildTurns: 5,
   },
   artillery: {
     id: 'artillery', name: 'Mobile Artillery', domain: 'land', movementClass: 'tracked',
     moves: 2, vision: 2, eyeHeight: LAND_EYE, maxHp: 8, size: 2, attack: 6, defense: 1,
-    targetClass: 'soft', buildTurns: 8, attackRange: { min: 2, max: 3 }, indirectFire: true,
+    targetClass: 'soft', buildTurns: 5, attackRange: { min: 2, max: 3 }, indirectFire: true,
   },
   anti_air: {
     id: 'anti_air', name: 'Anti-Air', domain: 'land', movementClass: 'wheeled',
     moves: 3, vision: 3, eyeHeight: LAND_EYE, maxHp: 8, size: 2, attack: 2, defense: 2,
-    targetClass: 'armored', buildTurns: 6, airInterceptRange: 2,
+    targetClass: 'armored', buildTurns: 4, airInterceptRange: 2,
   },
 
   // ─── Sea ────────────────────────────────────────────────────────────────────
   corvette: {
     id: 'corvette', name: 'Corvette', domain: 'sea', movementClass: 'naval',
     moves: 7, vision: 3, eyeHeight: SEA_EYE, maxHp: 6, size: 0, attack: 2, defense: 2,
-    targetClass: 'naval_light', buildTurns: 5,
+    targetClass: 'naval_light', buildTurns: 3,
   },
   destroyer: {
     id: 'destroyer', name: 'Destroyer', domain: 'sea', movementClass: 'naval',
     moves: 6, vision: 3, eyeHeight: SEA_EYE, maxHp: 10, size: 0, attack: 4, defense: 3,
-    targetClass: 'naval_light', buildTurns: 10, sonarRange: 2,
+    targetClass: 'naval_light', buildTurns: 6, sonarRange: 2,
   },
   missile_cruiser: {
     id: 'missile_cruiser', name: 'Missile Cruiser', domain: 'sea', movementClass: 'naval_heavy',
     moves: 5, vision: 3, eyeHeight: SEA_EYE, maxHp: 14, size: 0, attack: 6, defense: 5,
-    targetClass: 'naval_heavy', buildTurns: 16, attackRange: { min: 1, max: 4 },
+    targetClass: 'naval_heavy', buildTurns: 10, attackRange: { min: 1, max: 4 },
     airInterceptRange: 3, requiresSpecialization: 'naval_yard',
   },
   submarine: {
     id: 'submarine', name: 'Attack Submarine', domain: 'sea', movementClass: 'naval',
     moves: 5, vision: 2, eyeHeight: SEA_EYE, maxHp: 8, size: 0, attack: 7, defense: 2,
-    targetClass: 'submarine', buildTurns: 12, stealth: true,
+    targetClass: 'submarine', buildTurns: 7, stealth: true,
   },
   battleship: {
     id: 'battleship', name: 'Battleship', domain: 'sea', movementClass: 'naval_heavy',
     moves: 4, vision: 3, eyeHeight: SEA_EYE, maxHp: 20, size: 0, attack: 8, defense: 7,
-    targetClass: 'naval_heavy', buildTurns: 20, attackRange: { min: 1, max: 3 },
+    targetClass: 'naval_heavy', buildTurns: 12, attackRange: { min: 1, max: 3 },
     requiresSpecialization: 'naval_yard',
   },
   carrier: {
     id: 'carrier', name: 'Aircraft Carrier', domain: 'sea', movementClass: 'naval_heavy',
     moves: 5, vision: 3, eyeHeight: SEA_EYE, maxHp: 16, size: 0, attack: 1, defense: 4,
-    targetClass: 'naval_heavy', buildTurns: 20, cargo: { capacity: 6, accepts: ['air'] },
+    targetClass: 'naval_heavy', buildTurns: 12, cargo: { capacity: 6, accepts: ['air'] },
     requiresSpecialization: 'naval_yard',
   },
   transport: {
     id: 'transport', name: 'Amphibious Transport', domain: 'sea', movementClass: 'naval',
     moves: 6, vision: 2, eyeHeight: SEA_EYE, maxHp: 8, size: 0, attack: 0, defense: 1,
-    targetClass: 'naval_light', buildTurns: 8, cargo: { capacity: 6, accepts: ['land'] },
+    targetClass: 'naval_light', buildTurns: 5, cargo: { capacity: 6, accepts: ['land'] },
   },
 
   // ─── Air ────────────────────────────────────────────────────────────────────
   recon_drone: {
     id: 'recon_drone', name: 'Recon Drone', domain: 'air', movementClass: 'air',
     moves: 14, vision: 5, eyeHeight: AIR_EYE, maxHp: 3, size: 1, attack: 0, defense: 0,
-    targetClass: 'air', buildTurns: 4, fuel: 42,
+    targetClass: 'air', buildTurns: 2, fuel: 42,
   },
   fighter: {
     id: 'fighter', name: 'Air Superiority Fighter', domain: 'air', movementClass: 'air',
     moves: 12, vision: 3, eyeHeight: AIR_EYE, maxHp: 8, size: 2, attack: 5, defense: 4,
-    targetClass: 'air', buildTurns: 8, fuel: 24,
+    targetClass: 'air', buildTurns: 5, fuel: 24,
   },
   cas: {
     id: 'cas', name: 'Close Air Support', domain: 'air', movementClass: 'air',
     moves: 10, vision: 3, eyeHeight: AIR_EYE, maxHp: 8, size: 2, attack: 7, defense: 2,
-    targetClass: 'air', buildTurns: 10, fuel: 20,
+    targetClass: 'air', buildTurns: 6, fuel: 20,
   },
   strategic_bomber: {
     id: 'strategic_bomber', name: 'Strategic Bomber', domain: 'air', movementClass: 'air',
     moves: 10, vision: 3, eyeHeight: AIR_EYE, maxHp: 12, size: 3, attack: 8, defense: 2,
-    targetClass: 'air', buildTurns: 15, fuel: 40, requiresSpecialization: 'air_base',
+    targetClass: 'air', buildTurns: 9, fuel: 40, requiresSpecialization: 'air_base',
   },
   awacs: {
     id: 'awacs', name: 'AWACS', domain: 'air', movementClass: 'air',
     moves: 8, vision: 9, eyeHeight: 10, maxHp: 6, size: 3, attack: 0, defense: 1,
-    targetClass: 'air', buildTurns: 14, fuel: 32, requiresSpecialization: 'air_base',
+    targetClass: 'air', buildTurns: 8, fuel: 32, requiresSpecialization: 'air_base',
   },
 };
 

@@ -672,7 +672,10 @@ export class GameSession {
           const city = this.world.city(e.city);
           const name = city?.name ?? 'una ciudad';
           if (e.audience === e.by) this.push(e.audience, `Capturaste ${name}.`, 'good', city?.position);
-          else this.push(e.audience, `${this.nameOf(e.by)} te capturó ${name}.`, 'bad', city?.position);
+          else {
+            const planes = e.aircraftLost ? ` Perdiste ${e.aircraftLost} ${e.aircraftLost === 1 ? 'aeronave estacionada' : 'aeronaves estacionadas'} ahí.` : '';
+            this.push(e.audience, `${this.nameOf(e.by)} te capturó ${name}.${planes}`, 'bad', city?.position);
+          }
           break;
         }
         case 'combat':

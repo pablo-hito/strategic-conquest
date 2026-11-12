@@ -185,7 +185,7 @@ Hay dos bots, y los dos juegan con los mismos comandos de `Match` que usa un hum
 | Almirante | ronda 48 | 1,0 × | 1 | incursiones continuas | destructores, submarinos, acorazado, portaaviones |
 
 **Plan de juego.** La apertura es igual para todas las personalidades (la única estrategia viable es expandirse lo más rápido posible); la personalidad decide cómo se pelea después.
-1. *Apertura (`grow`)*: infantería a toda ciudad neutral cercana por tierra (una sola unidad por ciudad; si la caminata pasa de 8 turnos, va en barco), drones hasta tener explorado el 80% del mapa (más drones cuanto más grande el mapa: 2 en el chico, 4 en el mediano, 8 en el enorme), y transportes **según la demanda**: uno cada dos ciudades neutrales conocidas en ultramar y uno cada cuatro soldados ociosos (tope: 2 + la mitad de las ciudades). Con 8 o más soldados esperando barco deja de hacer infantería. Ver al enemigo no la termina; termina al quedarse sin ciudades por tomar, al perder una ciudad o al llegar a la ronda máxima de la personalidad (escalada con el tamaño del mapa: ×1,6 en el mediano, ×2,6 en el enorme).
+1. *Apertura (`grow`)*: infantería a toda ciudad neutral cercana por tierra (una sola unidad por ciudad; si la caminata pasa de 8 turnos, va en barco), drones hasta tener explorado el 80% del mapa (más drones cuanto más grande el mapa: 2 en el chico, 4 en el mediano, 8 en el enorme), y transportes **según la demanda**: uno cada dos ciudades neutrales conocidas en ultramar y uno cada cuatro soldados ociosos (tope: 2 + la mitad de las ciudades). Con 8 o más soldados esperando barco deja de hacer infantería: los puertos hacen transportes y el resto infantería mecanizada (nunca tanques en la apertura: no capturan y quedaban parados en la retaguardia). Una isla no pide más infantería si ya tiene más tropas que ciudades por tomar (más 3), y los drones crecen con el imperio (1 cada 3 ciudades) para que las primeras ciudades de una isla chica hagan barcos. Ver al enemigo no la termina; termina al quedarse sin ciudades por tomar, al perder una ciudad o al llegar a la ronda máxima de la personalidad (escalada con el tamaño del mapa: ×1,6 en el mediano, ×2,6 en el enorme).
    - *Drones*: vuelan varios turnos hacia la niebla más lejana de sus bases que el combustible permita (en vuelo cada turno quema el movimiento completo, así que el combustible compra turnos enteros), siguen decidiendo mientras les queden movimientos y aterrizan en la ciudad propia más cercana. Antes volvían a la base cada dos turnos y en un mapa mediano nunca pasaban de la propia costa.
 2. *Guerra, alternando dos posturas*: cada 8 rondas o más compara su fuerza (ciudades × 10 + ejército en turnos de producción) con la del rival (ciudades conocidas y el ejército visto últimamente, que se olvida de a poco). Si la proporción supera la agresividad de la personalidad (con un margen de ±0,2 que cambia cada 20 rondas, para que no sea predecible) pasa a la **ofensiva**; si no, **consolida**. Perder una ciudad lo pone a consolidar.
    - *Ofensiva (`attack`)*: el objetivo es una ciudad enemiga (pocas defensas, cercanía, algo de azar) y lo mantiene hasta tomarlo o hasta 25 rondas; los blindados embarcan; los ataques se toman con un margen 20% menor.
@@ -225,24 +225,28 @@ Vite + TypeScript + Canvas 2D, sin framework. Juega partidas locales (contra la 
 
 | Unidad | Clase mov. | MP | Visión | HP | Tamaño | Atk/Def | Turnos | Notas |
 |---|---|---|---|---|---|---|---|---|
-| Recon | wheeled | 5 | 3 | 6 | 2 | 1/1 | 3 | |
-| Infantry | foot | 2 | 2 | 10 | 1 | 2/2 | 4 | captura, atrinchera (+20%/turno, máx. +60%) |
-| Mech Infantry | tracked | 3 | 2 | 10 | 2 | 3/3 | 6 | captura, atrinchera |
-| Heavy Tank | tracked | 3 | 2 | 12 | 3 | 6/4 | 8 | |
-| Artillery | tracked | 2 | 2 | 8 | 2 | 6/1 | 8 | rango 2–3, no mueve tras disparar |
-| Anti-Air | wheeled | 3 | 3 | 8 | 2 | 2/2 | 6 | intercepta a 2 |
-| Corvette | naval | 7 | 3 | 6 | – | 2/2 | 5 | |
-| Destroyer | naval | 6 | 3 | 10 | – | 4/3 | 10 | sonar 2 |
-| Missile Cruiser | naval_heavy | 5 | 3 | 14 | – | 6/5 | 16 | rango 1–4, AA 3, Naval Yard |
-| Submarine | naval | 5 | 2 | 8 | – | 7/2 | 12 | Silent Running: sigilo, ½ MP |
-| Battleship | naval_heavy | 4 | 3 | 20 | – | 8/7 | 20 | rango 1–3, Naval Yard |
-| Carrier | naval_heavy | 5 | 3 | 16 | – | 1/4 | 20 | capacidad 6 aérea, Naval Yard |
-| Transport | naval | 6 | 2 | 8 | – | 0/1 | 8 | capacidad 6 terrestre |
-| Recon Drone | air | 14 | 5 | 3 | 1 | 0/0 | 4 | combustible 42 |
-| Fighter | air | 12 | 3 | 8 | 2 | 5/4 | 8 | combustible 24 |
-| CAS | air | 10 | 3 | 8 | 2 | 7/2 | 10 | combustible 20 |
-| Strategic Bomber | air | 10 | 3 | 12 | 3 | 8/2 | 15 | combustible 40, Air Base |
-| AWACS | air | 8 | 9 | 6 | 3 | 0/1 | 14 | ojo 10, Air Base |
+| Recon | wheeled | 5 | 3 | 6 | 2 | 1/1 | 2 | |
+| Infantry | foot | 2 | 2 | 10 | 1 | 2/2 | 2 | captura, atrinchera (+20%/turno, máx. +60%) |
+| Mech Infantry | tracked | 3 | 2 | 10 | 2 | 3/3 | 4 | captura, atrinchera |
+| Heavy Tank | tracked | 3 | 2 | 12 | 3 | 6/4 | 5 | |
+| Artillery | tracked | 2 | 2 | 8 | 2 | 6/1 | 5 | rango 2–3, no mueve tras disparar |
+| Anti-Air | wheeled | 3 | 3 | 8 | 2 | 2/2 | 4 | intercepta a 2 |
+| Corvette | naval | 7 | 3 | 6 | – | 2/2 | 3 | |
+| Destroyer | naval | 6 | 3 | 10 | – | 4/3 | 6 | sonar 2 |
+| Missile Cruiser | naval_heavy | 5 | 3 | 14 | – | 6/5 | 10 | rango 1–4, AA 3, Naval Yard |
+| Submarine | naval | 5 | 2 | 8 | – | 7/2 | 7 | Silent Running: sigilo, ½ MP |
+| Battleship | naval_heavy | 4 | 3 | 20 | – | 8/7 | 12 | rango 1–3, Naval Yard |
+| Carrier | naval_heavy | 5 | 3 | 16 | – | 1/4 | 12 | capacidad 6 aérea, Naval Yard |
+| Transport | naval | 6 | 2 | 8 | – | 0/1 | 5 | capacidad 6 terrestre |
+| Recon Drone | air | 14 | 5 | 3 | 1 | 0/0 | 2 | combustible 42 |
+| Fighter | air | 12 | 3 | 8 | 2 | 5/4 | 5 | combustible 24 |
+| CAS | air | 10 | 3 | 8 | 2 | 7/2 | 6 | combustible 20 |
+| Strategic Bomber | air | 10 | 3 | 12 | 3 | 8/2 | 9 | combustible 40, Air Base |
+| AWACS | air | 8 | 9 | 6 | 3 | 0/1 | 8 | ojo 10, Air Base |
+
+**Producción** (noviembre 2026): todos los tiempos se bajaron al 60% (redondeado) para que los finales no se estiren: la infantería sale en 2 turnos, el tanque y el transporte en 5.
+
+**Dos capas: aire y superficie.** Los aviones sólo bloquean aviones, y las unidades de tierra y mar sólo bloquean a las de tierra y mar: un avión encima no corta un camino ni el suministro, y puede sobrevolar una ciudad ajena (sin repostar). Una ciudad defendida sólo por aviones se toma entrando, y los aviones estacionados del dueño anterior se pierden en tierra (el evento `city_captured` lo informa con `aircraftLost`).
 
 **Carga por tamaño**: transportes y portaaviones tienen capacidad 6 y cada unidad ocupa su tamaño (infantería 1; reconocimiento, mecanizada, artillería y antiaéreo 2; tanque 3; en portaaviones: dron 1, caza y apoyo aéreo 2, bombardero y AWACS 3). Un transporte lleva, por ejemplo, 6 infanterías, o 2 tanques, o un tanque y 3 infanterías.
 

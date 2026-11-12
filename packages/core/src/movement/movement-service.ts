@@ -34,6 +34,8 @@ export interface MoveOutcome {
   readonly captured?: CityId;
   /** Who owned the captured city before (null = it was neutral). */
   readonly capturedFrom?: PlayerId | null;
+  /** The previous owner's aircraft destroyed on the ground by the capture. */
+  readonly aircraftLost?: readonly UnitId[];
   /** Fog deltas to push to each player (only players whose view changed). */
   readonly fogUpdates: ReadonlyMap<PlayerId, FogUpdate>;
 }
@@ -76,6 +78,7 @@ export function moveUnit(
   let blockedBy: StepError | undefined;
   let captured: CityId | undefined;
   let capturedFrom: PlayerId | null = null;
+  const aircraftLost: UnitId[] = [];
 
   for (const next of path) {
     const r = checkStep(truth, unit, unit.position, next);
@@ -101,6 +104,12 @@ export function moveUnit(
     if (plan.kind === 'capture') {
       const city = world.cityAt(next)!;
       capturedFrom = city.owner;
+      // Aircraft parked in the city are caught on the ground.
+      if (capturedFrom !== null) {
+        for (const u of world.unitsAt(next)) {
+          if (u.owner === capturedFrom && u.def.domain === 'air') aircraftLost.push(...world.removeUnit(u.id));
+        }
+      }
       world.captureCity(city.id, player);
       unit.exhaustMoves();
       captured = city.id;
@@ -140,7 +149,7 @@ export function moveUnit(
     position: unit.position,
     stoppedBy,
     ...(blockedBy ? { blockedBy } : {}),
-    ...(captured ? { captured, capturedFrom } : {}),
+    ...(captured ? { captured, capturedFrom, aircraftLost } : {}),
     fogUpdates,
   });
 }

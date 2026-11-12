@@ -171,7 +171,7 @@ describe('forecast and resolution', () => {
     const w = new WorldState(Grid.fromAscii(['..~']));
     const city = w.foundCity('Target', { x: 1, y: 0 });
     city.capture(P2);
-    city.setProduction('destroyer');
+    city.setProduction('submarine'); // 7 turns
     for (let i = 0; i < 6; i++) city.tickProduction();
     const bomber = w.spawnUnit('strategic_bomber', P1, { x: 0, y: 0 });
     const p = plan(w, bomber.id, city.position);
