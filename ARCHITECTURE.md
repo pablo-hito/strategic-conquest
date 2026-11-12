@@ -166,7 +166,11 @@ Medido sobre 15 semillas por combinación (3 tamaños × 3 densidades × 2/4/6 j
 
 **Pronóstico (`forecastAttack`).** Calcula el daño esperado sin tirar dados; el visor lo muestra al pasar el cursor sobre un objetivo. Ambos bandos reciben un evento `combat`.
 
-Valores de referencia (unidades sanas): tanque vs infantería en llanura −6,8 / contraataque −1,7; en su ciudad −5,3; en su ciudad y atrincherada −4,3; infantería vs tanque −2,1 / −6,4; infantería vs infantería −3,1 / −2,8; tanque vs tanque en ciudad −5,0 / −5,0; submarino vs portaaviones −9,7 de 16. (La infantería tiene defensa 3 y efectividad 0,7 contra blindados.)
+Valores de referencia (unidades sanas, daño base 6 desde noviembre 2026; antes 4, las peleas tardaban 3 o 4 golpes): tanque vs infantería en llanura −10,2 / contraataque −2,6; en su ciudad −8,0; en su ciudad y atrincherada −6,5; infantería vs tanque −3,2 / −9,6; infantería vs infantería −4,7 / −4,2; tanque vs tanque en ciudad −7,5 / −7,5; submarino vs portaaviones −14,6 de 16. La mayoría de las peleas se resuelve en 1 o 2 golpes.
+
+**Asalto conjunto** (visor: tecla A, Mayús+clic o botón): atacan en orden todas las unidades propias que tienen el objetivo a tiro sin moverse (primero las que no reciben contraataque, después por daño), re-planificando tras cada golpe y salteando los ataques suicidas; si era una ciudad y quedó sin defensores, una unidad capaz de capturar que esté al lado entra y la toma. En línea el orden se planifica una vez y cada golpe va al servidor; el primer rechazo (objetivo ya destruido) lo termina.
+
+**Carga** (tecla L): con un transporte elegido suben todas las tropas propias de su casilla y de las vecinas que entren (las vecinas pisan el transporte y, si está en puerto, embarcan); con una unidad de tierra, embarca en el transporte más cercano con lugar. **X** cancela la orden programada ("ir a") de la unidad elegida. (La infantería tiene defensa 3 y efectividad 0,7 contra blindados.)
 
 ## 3h. Bots (`packages/ai`)
 

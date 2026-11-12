@@ -370,6 +370,131 @@ export class GameSession {
     return null;
   }
 
+  // ─── Joint assault and loading ──────────────────────────────────────────────
+
+  /**
+   * Own units that can strike `target` right now without moving, best first: those
+   * that take no return fire (artillery, ships shelling from range), then by damage.
+   * Attacks the forecast says would kill the attacker are left out.
+   */
+  strikersAt(target: Coord): { unit: Unit; forecast: Forecast }[] {
+    const out: { unit: Unit; forecast: Forecast }[] = [];
+    for (const u of this.world.unitsOf(this.viewer)) {
+      if (u.def.attack <= 0 || u.attackedThisTurn || u.movesLeft <= 0) continue;
+      if (this.world.grid.distance(u.position, target) > (u.def.attackRange?.max ?? 1)) continue;
+      const f = this.forecast(u.id, target);
+      if (!f || f.damageToDefender <= 0) continue;
+      if (f.damageToAttacker + f.interceptionDamage >= u.hp) continue;
+      out.push({ unit: u, forecast: f });
+    }
+    return out.sort(
+      (a, b) =>
+        Number(a.forecast.defenderCanCounter) - Number(b.forecast.defenderCanCounter) ||
+        b.forecast.damageToDefender - a.forecast.damageToDefender,
+    );
+  }
+
+  /** Visible enemy ground or sea units on a tile (what stands between us and a city). */
+  protected enemySurfaceAt(c: Coord): boolean {
+    return this.view().foreignUnits.some((u) => u.position.x === c.x && u.position.y === c.y && UNIT_TYPES[u.type].domain !== 'air');
+  }
+
+  /** An own unit next to `target` that can walk in and take the city there. */
+  protected capturerFor(target: Coord): Unit | undefined {
+    const city = this.world.cityAt(target);
+    if (!city || city.owner === this.viewer) return undefined;
+    return this.world
+      .unitsOf(this.viewer)
+      .find((u) => u.def.canCaptureCities && u.movesLeft > 0 && this.world.grid.distance(u.position, target) === 1);
+  }
+
+  /**
+   * Every unit in range strikes the target, best first, re-planning after each blow,
+   * until nothing is left there or nobody can hit it without dying. If it was a city
+   * and it is now empty, a unit next to it walks in and takes it.
+   */
+  jointAssault(target: Coord): string {
+    let attacks = 0;
+    for (let guard = 0; guard < 40; guard++) {
+      if (!this.view().foreignUnits.some((u) => u.position.x === target.x && u.position.y === target.y)) break;
+      const best = this.strikersAt(target)[0];
+      if (!best) break;
+      if (this.attack(best.unit.id, target)) break;
+      attacks++;
+    }
+    if (attacks === 0) return 'Ninguna unidad puede atacar ese objetivo sin moverse (o sería suicida).';
+    let taken = false;
+    if (!this.enemySurfaceAt(target)) {
+      const c = this.capturerFor(target);
+      if (c && !this.moveTo(c.id, target)) taken = this.world.cityAt(target)?.owner === this.viewer;
+    }
+    const cleared = !this.view().foreignUnits.some((u) => u.position.x === target.x && u.position.y === target.y);
+    return `Asalto conjunto: ${attacks} ${attacks === 1 ? 'ataque' : 'ataques'}. ${taken ? 'Ciudad tomada.' : cleared ? 'Objetivo destruido.' : 'El objetivo resiste.'}`;
+  }
+
+  /** Transports with room for `u` on its tile or next to it (nearest first). */
+  transportsFor(u: Unit): Unit[] {
+    return this.world
+      .unitsOf(this.viewer)
+      .filter((t) => t.id !== u.carriedBy && t.def.cargo?.accepts.includes(u.def.domain) && t.freeCapacity >= u.def.size && this.world.grid.distance(t.position, u.position) <= 1)
+      .sort((a, b) => this.world.grid.distance(a.position, u.position) - this.world.grid.distance(b.position, u.position));
+  }
+
+  /** Land units that could get on `carrier` now: on its tile or right next to it. */
+  loadCandidates(carrier: Unit): Unit[] {
+    if (!carrier.def.cargo) return [];
+    return this.world
+      .unitsOf(this.viewer)
+      .filter(
+        (u) =>
+          u.carriedBy === null &&
+          u.movesLeft > 0 &&
+          carrier.def.cargo!.accepts.includes(u.def.domain) &&
+          u.def.domain !== 'air' &&
+          this.world.grid.distance(u.position, carrier.position) <= 1,
+      )
+      .sort((a, b) => this.world.grid.distance(a.position, carrier.position) - this.world.grid.distance(b.position, carrier.position) || b.def.size - a.def.size);
+  }
+
+  /** Put one unit aboard `carrier` (stepping onto it first if it is next door). */
+  protected boardOne(u: Unit, carrier: Unit): boolean {
+    if (this.world.grid.distance(u.position, carrier.position) === 1) {
+      const r = this.match.move(this.viewer, u.id, [carrier.position]);
+      if (!r.ok) return false;
+      this.pushEvents(r.value.events);
+      if (u.carriedBy === carrier.id) return true; // stepped straight aboard at sea
+    }
+    return this.match.board(this.viewer, u.id, carrier.id).ok;
+  }
+
+  /** Load every unit that fits aboard `carrierId`. */
+  loadAll(carrierId: UnitId): string {
+    const carrier = this.ownUnit(carrierId);
+    if (!carrier?.def.cargo?.accepts.includes('land')) return 'Esta unidad no lleva tropas.';
+    let n = 0;
+    for (const u of this.loadCandidates(carrier)) {
+      if (carrier.freeCapacity < u.def.size) continue;
+      if (this.boardOne(u, carrier)) {
+        n++;
+        this.orders.delete(u.id);
+      }
+    }
+    this.invalidate();
+    return n ? `Subieron ${n} ${n === 1 ? 'unidad' : 'unidades'} (carga ${carrier.cargoLoad}/${carrier.def.cargo.capacity}).` : 'No hay tropas para subir: tienen que estar en la casilla del transporte o al lado, con movimiento.';
+  }
+
+  /** Put a land unit aboard the nearest transport with room. */
+  embark(id: UnitId): string {
+    const u = this.ownUnit(id);
+    if (!u || u.def.domain !== 'land') return 'Sólo las tropas de tierra embarcan.';
+    const t = this.transportsFor(u)[0];
+    if (!t) return 'No hay un transporte con lugar en la casilla ni al lado.';
+    const ok = this.boardOne(u, t);
+    this.invalidate();
+    if (ok) this.orders.delete(id);
+    return ok ? `Embarcó en el transporte (carga ${t.cargoLoad}/${t.def.cargo!.capacity}).` : 'No pudo embarcar.';
+  }
+
   /**
    * Own units still waiting for orders this turn, in the order the player should
    * handle them: transports first (their cargo moves with them), then other ships,

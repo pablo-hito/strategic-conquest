@@ -41,7 +41,7 @@ export const EFFECTIVENESS: Readonly<Record<UnitTypeId, Row>> = {
 };
 
 /** Damage dealt when attack and defense strengths are equal. */
-export const BASE_DAMAGE = 4;
+export const BASE_DAMAGE = 6;
 /** Damage scale for anti-air interception (a snap shot, weaker than a full attack). */
 export const INTERCEPT_DAMAGE = 3;
 /**

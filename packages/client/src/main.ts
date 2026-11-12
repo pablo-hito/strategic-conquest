@@ -368,6 +368,66 @@ class App {
     this.afterAction(unit.id, !!msg);
   }
 
+  /**
+   * Which target "A" means: the enemy under the cursor, else the selected enemy tile,
+   * else (with a unit selected) the in-range target most of the army can hit.
+   */
+  private jointTarget(): Coord | null {
+    const s = this.session;
+    const ok = (t: Coord | undefined | null) => !!t && s.world.grid.inBounds(t) && this.hasForeignUnit(t) && s.strikersAt(t).length > 0;
+    if (ok(this.hover)) return this.hover!;
+    if (this.sel?.kind === 'tile' && ok(this.sel.at)) return this.sel.at;
+    let best: Coord | null = null;
+    let most = 0;
+    for (const i of this.targets ?? []) {
+      const t = s.world.grid.coordOf(i);
+      const n = s.strikersAt(t).length;
+      if (n > most) [best, most] = [t, n];
+    }
+    return best;
+  }
+
+  /** Every unit in range strikes the target; an emptied city is walked into. */
+  private jointAssault(target: Coord | null = this.jointTarget()): void {
+    if (this.locked || this.session.match.status !== 'playing') return;
+    if (!target) return this.toast('Elegí un enemigo (pasá el cursor encima o tocá su casilla) que tus unidades tengan a tiro.');
+    const before = this.session.world.unitsOf(this.session.viewer).length;
+    const msg = this.session.jointAssault(target);
+    this.sound.play('attack');
+    if (!this.online) {
+      const lost = before - this.session.world.unitsOf(this.session.viewer).length;
+      const cleared = !this.hasForeignUnit(target);
+      this.renderer.blast(target, cleared ? 'DESTRUIDO' : 'ASALTO', cleared, performance.now());
+      if (cleared || lost) this.sound.play('explosion', 120);
+      this.tutorial.done('attack');
+    }
+    this.toast(msg);
+    const u = this.selectedUnit();
+    if (u) this.afterAction(u.id, true);
+    else this.refresh();
+  }
+
+  /** L: a transport takes everyone it can; a land unit gets on the nearest transport. */
+  private loadOrEmbark(): void {
+    const u = this.selectedUnit();
+    if (!u || this.locked) return;
+    const msg = u.def.cargo?.accepts.includes('land') ? this.session.loadAll(u.id) : this.session.embark(u.id);
+    this.toast(msg);
+    this.sound.play('select');
+    this.refresh();
+    this.select({ kind: 'unit', id: u.id });
+  }
+
+  /** X: drop the selected unit's standing go-to order. */
+  private cancelOrder(): void {
+    const u = this.selectedUnit();
+    if (!u) return;
+    if (!this.session.orders.has(u.id)) return this.toast('Esta unidad no tiene una orden programada.');
+    this.session.cancelOrder(u.id);
+    this.toast('Orden cancelada: la unidad queda a la espera.');
+    this.refresh();
+  }
+
   /** Move next to the target and attack, in one click. */
   private assault(unit: Unit, target: Coord): void {
     if (this.online) return this.sendOnline(unit, () => this.session.assault(unit.id, target), 'attack');
@@ -886,6 +946,8 @@ class App {
       : this.targets?.size ? plural(this.targets.size, 'objetivo a tiro', 'objetivos a tiro') + (reachable ? ` · ${reachable} moviendo` : '')
       : reachable ? `${plural(reachable, 'objetivo', 'objetivos')} moviendo antes`
       : 'Sin objetivos a tiro';
+    const loadable = def.cargo?.accepts.includes('land') ? s.loadCandidates(u).filter((x) => x.def.size <= u.freeCapacity).length : 0;
+    const canEmbark = def.domain === 'land' && u.carriedBy === null && u.movesLeft > 0 && s.transportsFor(u).length > 0;
     const chip = (x: Unit) => `<button type="button" class="chip-unit" data-unit="${x.id}" style="--faction:${color}" title="${UNIT_NAME[x.type]}"><b>${UNIT_CODE[x.type]}</b> ${x.movesLeft}/${x.maxMoves}</button>`;
 
     this.selPanel.innerHTML = `
@@ -906,7 +968,10 @@ class App {
       <div class="row">
         <button class="btn small" type="button" data-act="skip">Quieta <kbd>Espacio</kbd></button>
         ${def.stealth ? `<button class="btn small" type="button" data-act="silent">${u.silentRunning ? 'Emerger' : 'Silencio'} <kbd>S</kbd></button>` : ''}
-        ${order ? `<button class="btn small" type="button" data-act="cancel">Cancelar orden</button>` : ''}
+        ${order ? `<button class="btn small" type="button" data-act="cancel">Cancelar orden <kbd>X</kbd></button>` : ''}
+        ${this.targets?.size && !u.attackedThisTurn ? `<button class="btn small" type="button" data-act="joint" title="Atacan todas tus unidades al alcance; si la ciudad queda vacía, una entra y la toma">Asalto conjunto <kbd>A</kbd></button>` : ''}
+        ${loadable ? `<button class="btn small" type="button" data-act="load">Cargar tropas (${loadable}) <kbd>L</kbd></button>` : ''}
+        ${canEmbark ? `<button class="btn small" type="button" data-act="embark">Embarcar <kbd>L</kbd></button>` : ''}
         <button class="btn small ghost" type="button" data-act="disband" title="La quita del juego y libera lugar en el ejército">Disolver</button>
       </div>
       ${cargo.length ? `<div class="chips"><small>A bordo</small>${cargo.map(chip).join('')}</div>` : ''}
@@ -929,10 +994,10 @@ class App {
       this.sound.play('explosion');
       this.afterAction(u.id);
     });
-    q('cancel')?.addEventListener('click', () => {
-      this.session.cancelOrder(u.id);
-      this.refresh();
-    });
+    q('cancel')?.addEventListener('click', () => this.cancelOrder());
+    q('joint')?.addEventListener('click', () => this.jointAssault());
+    q('load')?.addEventListener('click', () => this.loadOrEmbark());
+    q('embark')?.addEventListener('click', () => this.loadOrEmbark());
     this.selPanel.querySelectorAll<HTMLButtonElement>('[data-unit]').forEach((b) =>
       b.addEventListener('click', () => this.select({ kind: 'unit', id: b.dataset.unit as UnitId })),
     );
@@ -1003,13 +1068,16 @@ class App {
     const foreign = view.foreignUnits.filter((u) => sameCoord(u.position, at));
     const ghosts = view.ghosts.filter((g) => sameCoord(g.position, at));
     const owner = (p: PlayerId | null) => (p ? this.session.nameOf(p) : 'Neutral');
+    const strikers = foreign.length && !this.locked ? this.session.strikersAt(at).length : 0;
     this.selPanel.innerHTML = `
       <div class="unit-head"><div class="city-mark terrain" aria-hidden="true"></div>
         <div><h3>${code === UNKNOWN_TERRAIN ? 'Sin explorar' : TERRAIN_NAME[TERRAINS[code]!]}</h3><p class="muted">X${at.x} Y${at.y}</p></div></div>
       ${city ? `<p><b style="color:${this.factionOf(city.owner)}">${esc(city.name)}</b> · ${owner(city.owner)} <span class="muted">· vista en la ronda ${city.lastSeenTurn}</span></p>` : ''}
       ${foreign.length ? `<div class="chips"><small>Enemigos</small>${foreign.map((u) => `<span class="chip-unit" style="--faction:${this.factionOf(u.owner)}"><b>${UNIT_CODE[u.type]}</b> ${u.hp}/${UNIT_TYPES[u.type].maxHp}</span>`).join('')}</div>` : ''}
       ${ghosts.length ? `<p class="muted">Último avistamiento: ${ghosts.map((g) => `${UNIT_NAME[g.type]} (ronda ${g.lastSeenTurn})`).join(', ')}.</p>` : ''}
-      ${code !== UNKNOWN_TERRAIN && !city && !foreign.length && !ghosts.length ? '<p class="muted">Nada a la vista en esta casilla.</p>' : ''}`;
+      ${code !== UNKNOWN_TERRAIN && !city && !foreign.length && !ghosts.length ? '<p class="muted">Nada a la vista en esta casilla.</p>' : ''}
+      ${strikers ? `<div class="row"><button class="btn small primary" type="button" data-act="joint">Asalto conjunto · ${plural(strikers, 'unidad', 'unidades')} <kbd>A</kbd></button></div>` : ''}`;
+    this.selPanel.querySelector('[data-act=joint]')?.addEventListener('click', () => this.jointAssault(at));
   }
 
   private renderLog(): void {
@@ -1070,6 +1138,9 @@ class App {
         <dt>Arrastrar · rueda</dt><dd>Desplazar el mapa · zoom (también con dos dedos)</dd>
         <dt>N</dt><dd>Siguiente unidad: la más cercana a donde estás jugando (al terminar de mover, la unidad queda seleccionada)</dd>
         <dt>Espacio</dt><dd>Dejar la unidad quieta este turno</dd>
+        <dt>A · Mayús+clic</dt><dd>Asalto conjunto: atacan todas tus unidades al alcance del enemigo (bajo el cursor o elegido), las que no reciben contraataque primero; si la ciudad queda vacía, una unidad entra y la toma</dd>
+        <dt>L</dt><dd>Cargar: con un transporte elegido suben todas las tropas de su casilla y de las vecinas que entren; con una unidad de tierra, embarca en el transporte de al lado</dd>
+        <dt>X</dt><dd>Cancelar la orden programada de la unidad (deja de seguir sola)</dd>
         <dt>S</dt><dd>Modo silencioso del submarino</dd>
         <dt>C</dt><dd>Centrar en la selección</dd>
         <dt>Enter</dt><dd>Fin de turno</dd>
@@ -1358,7 +1429,9 @@ class App {
       if (pointers.size < 2) pinch = 0;
       if (drag && !drag.moved && e.button !== 2 && pointers.size === 0) {
         const p = local(e);
-        this.clickTile(this.renderer.screenToTile(p.x, p.y));
+        const t = this.renderer.screenToTile(p.x, p.y);
+        if (e.shiftKey && this.session?.world.grid.inBounds(t) && this.hasForeignUnit(t)) this.jointAssault(t);
+        else this.clickTile(t);
       }
       if (pointers.size === 0) drag = null;
     };
@@ -1403,6 +1476,9 @@ class App {
         case 'n': case 'N': this.nextUnit(); break;
         case ' ': e.preventDefault(); this.skipUnit(); break;
         case 's': case 'S': this.toggleSilent(); break;
+        case 'a': case 'A': this.jointAssault(); break;
+        case 'l': case 'L': this.loadOrEmbark(); break;
+        case 'x': case 'X': this.cancelOrder(); break;
         case 'c': case 'C': { const at = this.selectionCoord(); if (at) this.renderer.centerOn(at); break; }
         case 'Escape': this.select(null); break;
         case '?': this.showHelp(); break;

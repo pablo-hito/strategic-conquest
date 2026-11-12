@@ -105,12 +105,14 @@ export class OnlineSession extends GameSession {
 
   // ─── Commands (sent to the server) ──────────────────────────────────────────
 
-  private async send(cmd: Command): Promise<Ack> {
+  /** `quiet`: a refusal is an expected outcome (e.g. the target is already gone), not an error to show. */
+  private async send(cmd: Command, quiet = false): Promise<Ack> {
     this.busy++;
     try {
       const ack = await this.link.command(cmd);
-      if (!ack.ok) this.onError(ack.message);
-      else this.pushEvents(ack.events);
+      if (!ack.ok) {
+        if (!quiet) this.onError(ack.message);
+      } else this.pushEvents(ack.events);
       return ack;
     } finally {
       this.busy--;
@@ -162,6 +164,73 @@ export class OnlineSession extends GameSession {
       this.rememberCombat(id, await this.send({ c: 'attack', unit: id, target }));
     })();
     return null;
+  }
+
+  /**
+   * Online: the strike order is planned once from what we see; each blow goes to the
+   * server in turn, and the first refusal (target gone, nothing left to hit) ends it.
+   */
+  override jointAssault(target: Coord): string {
+    const order = this.strikersAt(target).map((x) => x.unit.id);
+    if (order.length === 0) return 'Ninguna unidad puede atacar ese objetivo sin moverse (o sería suicida).';
+    const city = this.world.cityAt(target);
+    const capturers = this.world
+      .unitsOf(this.viewer)
+      .filter((u) => u.def.canCaptureCities && u.movesLeft > 0 && this.world.grid.distance(u.position, target) === 1)
+      .map((u) => u.id);
+    void (async () => {
+      let n = 0;
+      for (const id of order) {
+        const ack = await this.send({ c: 'attack', unit: id, target }, true);
+        if (!ack.ok) break;
+        n++;
+        this.rememberCombat(id, ack);
+        this.orders.delete(id);
+      }
+      let taken = false;
+      if (city && city.owner !== this.viewer) {
+        for (const id of capturers) {
+          const ack = await this.send({ c: 'move', unit: id, path: [target] }, true);
+          if (ack.ok) {
+            taken = ack.outcome?.stoppedBy === 'CAPTURED';
+            break;
+          }
+        }
+      }
+      this.push(this.viewer, `Asalto conjunto: ${n} ${n === 1 ? 'ataque' : 'ataques'}.${taken ? ' Ciudad tomada.' : ''}`, 'info');
+    })();
+    return 'Asalto conjunto en curso…';
+  }
+
+  override loadAll(carrierId: UnitId): string {
+    const carrier = this.ownUnit(carrierId);
+    if (!carrier?.def.cargo?.accepts.includes('land')) return 'Esta unidad no lleva tropas.';
+    let room = carrier.freeCapacity;
+    const picked = this.loadCandidates(carrier).filter((u) => (u.def.size <= room ? ((room -= u.def.size), true) : false));
+    if (picked.length === 0) return 'No hay tropas para subir: tienen que estar en la casilla del transporte o al lado, con movimiento.';
+    void (async () => {
+      for (const u of picked) await this.boardRemote(u.id, u.position, carrier.id, carrier.position);
+    })();
+    for (const u of picked) this.orders.delete(u.id);
+    return `Subiendo ${picked.length} ${picked.length === 1 ? 'unidad' : 'unidades'}…`;
+  }
+
+  override embark(id: UnitId): string {
+    const u = this.ownUnit(id);
+    if (!u || u.def.domain !== 'land') return 'Sólo las tropas de tierra embarcan.';
+    const t = this.transportsFor(u)[0];
+    if (!t) return 'No hay un transporte con lugar en la casilla ni al lado.';
+    void this.boardRemote(u.id, u.position, t.id, t.position);
+    this.orders.delete(id);
+    return 'Embarcando…';
+  }
+
+  private async boardRemote(unit: UnitId, at: Coord, carrier: UnitId, carrierAt: Coord): Promise<void> {
+    if (at.x !== carrierAt.x || at.y !== carrierAt.y) {
+      const moved = await this.send({ c: 'move', unit, path: [carrierAt] });
+      if (!moved.ok || moved.outcome?.stoppedBy === 'BOARDED') return; // aboard already (at sea)
+    }
+    await this.send({ c: 'board', unit, carrier });
   }
 
   private rememberCombat(id: UnitId, ack: Ack): void {
